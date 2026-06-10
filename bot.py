@@ -10,20 +10,28 @@ logging.basicConfig(level=logging.INFO)
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher(bot)
 
-GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key={GEMINI_KEY}"
-
 def ask_gemini(question):
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_KEY}"
+    
+    data = {
+        "contents": [{
+            "parts": [{"text": question}]
+        }]
+    }
+    
     try:
-        data = {
-            "contents": [{
-                "parts": [{"text": question}]
-            }]
-        }
-        response = requests.post(GEMINI_URL, json=data)
+        response = requests.post(url, json=data)
         result = response.json()
+        
+        # Hata kontrolü
+        if "error" in result:
+            return f"API Hatası: {result['error']['message']}"
+        
+        # Cevabı al
         return result["candidates"][0]["content"]["parts"][0]["text"][:500]
+        
     except Exception as e:
-        return f"Gemini hatası: {str(e)[:100]}"
+        return f"Bağlantı hatası: {str(e)[:100]}"
 
 @dp.message_handler(commands=['start'])
 async def start(message: types.Message):
@@ -47,8 +55,12 @@ async def ask(message: types.Message):
     await bot.edit_message_text(
         chat_id=message.chat.id,
         message_id=msg.message_id,
-        text=f"🤖 **Gemini cevaplıyor:**\n\n{cevap}"
+        text=f"🤖 **Gemini:**\n\n{cevap}"
     )
+
+@dp.message_handler()
+async def echo(message: types.Message):
+    await message.answer("Geçerli komutlar: /start, /test, /sor [soru]")
 
 if __name__ == '__main__':
     executor.start_polling(dp, skip_updates=True)
