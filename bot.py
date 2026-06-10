@@ -4,6 +4,70 @@ import requests
 from aiogram import Bot, Dispatcher, executor, types
 from google import genai
 
+# --- API ANAHTARLARI ---
+API_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+GEMINI_KEY = os.getenv("GEMINI_KEY")
+DEEPSEEK_KEY = os.getenv("DEEPSEEK_API_KEY")
+GROK_KEY = os.getenv("GROK_API_KEY")
+
+# --- GEMINI KURULUMU ---
+gemini_client = genai.Client(api_key=GEMINI_KEY)
+
+logging.basicConfig(level=logging.INFO)
+bot = Bot(token=API_TOKEN)
+dp = Dispatcher(bot)
+
+# --- GEMINI (Çalışan model) ---
+def ask_gemini(question):
+    try:
+        response = gemini_client.models.generate_content(
+            model="gemini-2.0-flash-exp",
+            contents=question
+        )
+        return response.text[:500]
+    except Exception as e:
+        return f"Gemini hatası: {str(e)[:100]}"
+
+# --- DEEPSEEK (Geçici olarak pasif) ---
+def ask_deepseek(question):
+    return "DeepSeek: Şimdilik devre dışı"
+
+# --- GROK (Geçici olarak pasif) ---
+def ask_grok(question):
+    return "Grok: Şimdilik devre dışı"
+
+# --- KOMUTLAR ---
+@dp.message_handler(commands=['start'])
+async def start(message: types.Message):
+    await message.answer("🌿 **Yasemin 3'lu Asistan** aktif!\n\n/sor [soru] - 3 AI'ya sor")
+
+@dp.message_handler(commands=['sor'])
+async def ask_all(message: types.Message):
+    question = message.get_args()
+    if not question:
+        await message.reply("Lütfen bir soru yaz: /sor [sorunuz]")
+        return
+    
+    msg = await message.reply("🔄 **3 AI aynı anda çalışıyor...**")
+    
+    gemini = ask_gemini(question)
+    deepseek = ask_deepseek(question)
+    grok = ask_grok(question)
+    
+    final = f"🤖 **3'lu Yapay Zeka Analizi:**\n\n"
+    final += f"🔹 **Gemini:** {gemini}\n\n"
+    final += f"🔹 **DeepSeek:** {deepseek}\n\n"
+    final += f"🔹 **Grok:** {grok}"
+    
+    await bot.edit_message_text(chat_id=message.chat.id, message_id=msg.message_id, text=final[:4000])
+
+if __name__ == '__main__':
+    executor.start_polling(dp, skip_updates=True)import os
+import logging
+import requests
+from aiogram import Bot, Dispatcher, executor, types
+from google import genai
+
 # --- API ANAHTARLARI (Railway'den alınacak) ---
 API_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GEMINI_KEY = os.getenv("GEMINI_KEY")
