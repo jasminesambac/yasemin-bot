@@ -4,43 +4,57 @@ import requests
 from aiogram import Bot, Dispatcher, executor, types
 
 API_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-DEEPSEEK_KEY = os.getenv("DEEPSEEK_API_KEY")
+GEMINI_KEY = os.getenv("GEMINI_KEY")
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher(bot)
 
-def test_deepseek():
-    """DeepSeek bağlantısını test et"""
-    url = "https://api.deepseek.com/v1/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {DEEPSEEK_KEY}",
-        "Content-Type": "application/json"
-    }
+def ask_gemini(question):
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key={GEMINI_KEY}"
+    
     data = {
-        "model": "deepseek-chat",
-        "messages": [{"role": "user", "content": "Merhaba, sadece 'bağlantı başarılı' yaz"}]
+        "contents": [{
+            "parts": [{"text": question}]
+        }]
     }
     
     try:
-        response = requests.post(url, headers=headers, json=data, timeout=10)
-        return response.status_code, response.text[:200]
+        response = requests.post(url, json=data, timeout=30)
+        result = response.json()
+        
+        if "error" in result:
+            return f"API Hatası: {result['error']['message']}"
+        
+        return result["candidates"][0]["content"]["parts"][0]["text"][:500]
+        
     except Exception as e:
-        return 0, str(e)[:100]
+        return f"Bağlantı hatası: {str(e)[:100]}"
 
-@dp.message_handler(commands=['testai'])
-async def test_ai(message: types.Message):
-    await message.reply("🔌 DeepSeek bağlantısı test ediliyor...")
-    status, result = test_deepseek()
-    await message.reply(f"Durum kodu: {status}\n\nYanıt: {result}")
+@dp.message_handler(commands=['sor'])
+async def sor(message: types.Message):
+    soru = message.get_args()
+    if not soru:
+        await message.reply("Bir soru yaz: /sor [soru]")
+        return
+    
+    msg = await message.reply("🤔 Gemini düşünüyor...")
+    
+    cevap = ask_gemini(soru)
+    
+    await bot.edit_message_text(
+        chat_id=message.chat.id,
+        message_id=msg.message_id,
+        text=f"🤖 **Gemini:**\n\n{cevap}"
+    )
 
 @dp.message_handler(commands=['start'])
 async def start(message: types.Message):
-    await message.answer("🌿 Bot çalışıyor! /testai ile DeepSeek'i dene")
+    await message.answer("🌿 Gemini asistanın hazır!\n\n/sor [soru] - Soru sor")
 
 @dp.message_handler(commands=['test'])
 async def test(message: types.Message):
-    await message.answer("✅ Test başarılı!")
+    await message.answer("✅ Bot çalışıyor!")
 
 if __name__ == '__main__':
     executor.start_polling(dp, skip_updates=True)
