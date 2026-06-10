@@ -1,0 +1,26 @@
+﻿Kategori;Malzeme / Alet;Başlangıç Miktarı;Kullanılan;Kalan Miktar;Birim;Görevi / Not
+Katı;NPK 10-6-25 (Emektar);1000;800;200;gr;Potasyum ağırlıklı çiçeklenme
+Katı;NPK 20-20-20 (Klimaks);1000;5;995;gr;Dengeli gelişim yaprak teşviki
+Katı;MAP (12-61-0);1300;20;1280;gr;Yüksek fosfor kök patlatma
+Katı;Potasyum Nitrat (13-0-46);1000;15;985;gr;Yaz sıcağı zırhı koku kalitesi
+Katı;Hümik Asit (K-Moos);1000;127;873;gr;Toprak düzenleyici besin taşıyıcı
+Katı;Deniz Yosunu (Lena LOcean);800;100;700;gr;Stres yönetimi kök uyarıcı
+Katı;Limon Tuzu (Sitrik Asit);Stok bol;60;Stok bol;gr;pH düşürücü
+Katı;Aşı Macunu;250;10;240;gr;Budama yaralarını kapatır
+Katı;Magnezyum Sülfat (Epsom Tuzu);1000;3;997;gr;Yaprak yeşilliği klorofil artırıcı
+Katı;Perlit;10;0;10;L;Drenaj ve havalandırma (yedek)
+Katı;Pomza (Büyük Boy);20;0;20;L;Sonbaharda saksı tabanı drenajı (yedek)
+Katı;Pomza (Orta/Küçük Boy);20;0;20;L;Üst yüzey Zırh (yedek)
+Sıvı;Lena Tonik;5000;61;4939;ml;Hücre yenileyici nakil şoku önleyici
+Sıvı;Kitinsan Ferrum (Demir);5000;30;4970;ml;Klorofil desteği sararma önleyici
+Sıvı;Skail S98 (Nano Kükürt);125;15;110;ml;pH düşürücü mantar ve küllemeye karşı
+Sıvı;Eastroot 8000 ppm IBA;250;5;245;ml;Köklendirme hormonu çelik havai daldırma
+Alet;Budama Makası;1;0;1;adet;Dal ve yaprak budama çelik alma
+Alet;Şırınga (1 ml 5 ml 10 ml);3;0;3;adet;Sıvı gübreleri ölçmek için
+Alet;Ölçü Kapları (ml/gr);2;0;2;adet;Toz gübreleri ölçmek için
+Mekanik;Kamış Çitler (Kısa 40 cm);–;–;Aktif;–;Teneke sarıcı ısı yalıtımı
+Mekanik;Kamış Çitler (Uzun 50 cm);–;–;Aktif;–;Rüzgar kırıcı
+Mekanik;Streç Film;–;–;Aktif;–;Rüzgar perdesi
+Mekanik;Tahta Palet / Merdiven Sistemi;–;–;Aktif;–;Tenekeleri yerden 5-7 cm yükseltir
+Cihaz;Sıvı pH metre;1;0;1;adet;Gübre karışımlarının pH'ını ölçer
+Cihaz;4 in 1 Dijital Toprak Ölçüm Cihazı;1;0;1;adet;Toprağın nem pH sıcaklık ışık değerlerini ölçer
