@@ -1,50 +1,31 @@
 import os
 import logging
-import requests
+from openai import OpenAI
 from aiogram import Bot, Dispatcher, executor, types
 
 API_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-GEMINI_KEY = os.getenv("GEMINI_KEY")
+AGNES_API_KEY = os.getenv("AGNES_API_KEY")
+
+# Agnes AI istemcisi (OpenAI uyumlu)
+client = OpenAI(
+    base_url="https://apihub.agnes-ai.com/v1",
+    api_key=AGNES_API_KEY
+)
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher(bot)
 
-# Olası model adları (güncel)
-MODEL_NAMES = [
-    "gemini-2.0-flash-exp",
-    "gemini-1.5-flash-002",
-    "gemini-1.5-pro-002", 
-    "gemini-1.5-flash-001",
-    "gemini-1.5-pro-001",
-    "gemini-2.0-pro-exp",
-    "gemini-exp-1206",
-    "gemini-1.5-flash",
-    "gemini-1.5-pro",
-    "gemini-pro"
-]
-
-def find_working_model(question):
-    """Çalışan bir model bulana kadar dene"""
-    for model in MODEL_NAMES:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_KEY}"
-        
-        data = {
-            "contents": [{
-                "parts": [{"text": question}]
-            }]
-        }
-        
-        try:
-            response = requests.post(url, json=data, timeout=10)
-            result = response.json()
-            
-            if "error" not in result:
-                return model, result["candidates"][0]["content"]["parts"][0]["text"][:500]
-        except:
-            continue
-    
-    return None, "Hiçbir model çalışmadı. Lütfen Google AI Studio'da hangi modellerin aktif olduğunu kontrol et."
+def ask_agnes(question):
+    try:
+        response = client.chat.completions.create(
+            model="agnes-2.0-flash",
+            messages=[{"role": "user", "content": question}],
+            max_tokens=500
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        return f"Agnes hatası: {str(e)[:100]}"
 
 @dp.message_handler(commands=['sor'])
 async def sor(message: types.Message):
@@ -53,26 +34,19 @@ async def sor(message: types.Message):
         await message.reply("Bir soru yaz: /sor [soru]")
         return
     
-    msg = await message.reply("🔍 Gemini modelleri taranıyor...")
+    msg = await message.reply("🤔 Agnes düşünüyor...")
     
-    model, cevap = find_working_model(soru)
+    cevap = ask_agnes(soru)
     
-    if model:
-        await bot.edit_message_text(
-            chat_id=message.chat.id,
-            message_id=msg.message_id,
-            text=f"✅ **Çalışan model: {model}**\n\n🤖 **Gemini:**\n\n{cevap}"
-        )
-    else:
-        await bot.edit_message_text(
-            chat_id=message.chat.id,
-            message_id=msg.message_id,
-            text=f"❌ {cevap}"
-        )
+    await bot.edit_message_text(
+        chat_id=message.chat.id,
+        message_id=msg.message_id,
+        text=f"🤖 **Agnes AI:**\n\n{cevap}"
+    )
 
 @dp.message_handler(commands=['start'])
 async def start(message: types.Message):
-    await message.answer("🌿 Gemini Asistan aktif!\n\n/sor [soru] - Soru sor (otomatik model bulur)")
+    await message.answer("🌿 **Agnes AI Asistan** hazır!\n\n📌 /sor [soru] - Soru sor")
 
 @dp.message_handler(commands=['test'])
 async def test(message: types.Message):
