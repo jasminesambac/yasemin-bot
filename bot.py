@@ -10,36 +10,40 @@ logging.basicConfig(level=logging.INFO)
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher(bot)
 
+# Denenecek modeller
+MODELS = [
+    "gemini-2.0-flash-exp",
+    "gemini-1.5-pro",
+    "gemini-pro"
+]
+
 def ask_gemini(question):
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_KEY}"
+    for model in MODELS:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_KEY}"
+        
+        data = {
+            "contents": [{
+                "parts": [{"text": question}]
+            }]
+        }
+        
+        try:
+            response = requests.post(url, json=data)
+            result = response.json()
+            
+            if "error" in result:
+                continue  # Bu model çalışmadı, diğerini dene
+            
+            return f"[{model}]\n{result['candidates'][0]['content']['parts'][0]['text'][:500]}"
+            
+        except:
+            continue
     
-    data = {
-        "contents": [{
-            "parts": [{"text": question}]
-        }]
-    }
-    
-    try:
-        response = requests.post(url, json=data)
-        result = response.json()
-        
-        # Hata kontrolü
-        if "error" in result:
-            return f"API Hatası: {result['error']['message']}"
-        
-        # Cevabı al
-        return result["candidates"][0]["content"]["parts"][0]["text"][:500]
-        
-    except Exception as e:
-        return f"Bağlantı hatası: {str(e)[:100]}"
+    return "Hiçbir model çalışmadı! Lütfen Google AI Studio'dan yeni API anahtarı al."
 
 @dp.message_handler(commands=['start'])
 async def start(message: types.Message):
     await message.answer("🌿 Bot çalışıyor! /sor [soru] yaz")
-
-@dp.message_handler(commands=['test'])
-async def test(message: types.Message):
-    await message.answer("✅ Test başarılı!")
 
 @dp.message_handler(commands=['sor'])
 async def ask(message: types.Message):
@@ -57,10 +61,6 @@ async def ask(message: types.Message):
         message_id=msg.message_id,
         text=f"🤖 **Gemini:**\n\n{cevap}"
     )
-
-@dp.message_handler()
-async def echo(message: types.Message):
-    await message.answer("Geçerli komutlar: /start, /test, /sor [soru]")
 
 if __name__ == '__main__':
     executor.start_polling(dp, skip_updates=True)
