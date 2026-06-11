@@ -6,7 +6,6 @@ from aiogram import Bot, Dispatcher, executor, types
 
 API_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
-# Geçici hafızalar
 son_kayit_geri_al = None
 silinecek_malzeme = None
 
@@ -21,12 +20,32 @@ def stok_oku():
     stok_listesi = []
     try:
         with open('inventory.csv', 'r', encoding='utf-8-sig') as f:
-            ilk_satir = f.readline()
-            f.seek(0)
-            delimiter = ';' if ';' in ilk_satir else ','
-            reader = csv.DictReader(f, delimiter=delimiter)
-            for row in reader:
-                stok_listesi.append(row)
+            # Dosyanın tamamını oku
+            icerik = f.read()
+            print(f"DEBUG - Dosya içeriği uzunluğu: {len(icerik)} karakter")
+            
+            # Satırları ayır
+            satirlar = icerik.strip().split('\n')
+            if not satirlar:
+                return []
+            
+            # Başlıkları al
+            basliklar = satirlar[0].split(';')
+            print(f"DEBUG - Başlıklar: {basliklar}")
+            
+            # Her satır için
+            for satir in satirlar[1:]:
+                if satir.strip():
+                    degerler = satir.split(';')
+                    # Eksik sütunları boşlukla doldur
+                    while len(degerler) < len(basliklar):
+                        degerler.append('')
+                    satir_sozluk = {}
+                    for i, baslik in enumerate(basliklar):
+                        satir_sozluk[baslik] = degerler[i].strip()
+                    stok_listesi.append(satir_sozluk)
+            
+            print(f"DEBUG - Toplam {len(stok_listesi)} malzeme okundu")
     except Exception as e:
         print(f"Stok okuma hatası: {e}")
     return stok_listesi
@@ -35,11 +54,11 @@ def stok_kaydet(stok_listesi):
     try:
         with open('inventory.csv', 'w', encoding='utf-8-sig', newline='') as f:
             if stok_listesi:
-                # Sabit fieldnames kullan (tutarlılık için)
                 fieldnames = ['Kategori', 'Malzeme / Alet', 'Başlangıç Miktarı', 'Kullanılan', 'Kalan Miktar', 'Birim', 'Görevi / Not']
                 writer = csv.DictWriter(f, fieldnames=fieldnames, delimiter=';')
                 writer.writeheader()
                 writer.writerows(stok_listesi)
+        print(f"DEBUG - {len(stok_listesi)} malzeme kaydedildi")
         return True
     except Exception as e:
         print(f"Stok kayıt hatası: {e}")
@@ -127,7 +146,7 @@ async def stok(message: types.Message):
             await message.reply(cevap)
     else:
         mesaj = "📦 **ENVANTER LİSTESİ**\n\n"
-        for item in stoklar[:25]:
+        for item in stoklar[:30]:
             mesaj += f"• {item.get('Malzeme / Alet')}: {item.get('Kalan Miktar')} {item.get('Birim')}\n"
         await message.reply(mesaj)
 
@@ -168,7 +187,26 @@ async def kaydet(message: types.Message):
     malzeme_adi = item.get('Malzeme / Alet')
     
     try:
-        kalan = float(str(item['Kalan Miktar']).replace(',', '.'))
+        kalan_str = str(item['Kalan Miktar']).replace(',', '.').strip()
+        if kalan_str == 'Stok bol':
+            # Sonsuz stok için kontrol yapma
+            yeni_kalan = 'Stok bol'
+            eski_kalan = 'Stok bol'
+            item['Kalan Miktar'] = yeni_kalan
+            stok_kaydet(stoklar)
+            
+            son_kayit_geri_al = {
+                'malzeme': malzeme_adi,
+                'eski_kalan': eski_kalan,
+                'kullanilan': miktar,
+                'birim': birim
+            }
+            
+            history_ekle("Kullanım", malzeme_adi, miktar, birim)
+            await message.reply(f"✅ {miktar:.1f} {birim} {malzeme_adi} kullanıldı. (Stok bol, tükenmez)")
+            return
+        
+        kalan = float(kalan_str)
         if kalan >= miktar:
             yeni_kalan = kalan - miktar
             eski_kalan = kalan
@@ -191,8 +229,8 @@ async def kaydet(message: types.Message):
         else:
             await message.reply(f"❌ Yetersiz stok! Kalan: {kalan:.1f} {birim}")
             return
-    except:
-        await message.reply("❌ Miktar okunamadı")
+    except Exception as e:
+        await message.reply(f"❌ Hata: {e}")
         return
 
 @dp.message_handler(commands=['kaydet_geri_al'])
@@ -205,7 +243,10 @@ async def kaydet_geri_al(message: types.Message):
     stoklar = stok_oku()
     for item in stoklar:
         if son_kayit_geri_al['malzeme'].lower() in item.get('Malzeme / Alet', '').lower():
-            item['Kalan Miktar'] = str(son_kayit_geri_al['eski_kalan']).replace('.', ',')
+            if son_kayit_geri_al['eski_kalan'] == 'Stok bol':
+                item['Kalan Miktar'] = 'Stok bol'
+            else:
+                item['Kalan Miktar'] = str(son_kayit_geri_al['eski_kalan']).replace('.', ',')
             kullanilan = float(str(item.get('Kullanılan', '0')).replace(',', '.'))
             item['Kullanılan'] = str(kullanilan - son_kayit_geri_al['kullanilan']).replace('.', ',')
             stok_kaydet(stoklar)
@@ -241,10 +282,10 @@ async def ekle_envanter(message: types.Message):
     # Aynı malzeme var mı kontrol et
     for item in stoklar:
         if item.get('Malzeme / Alet', '').lower() == malzeme_adi.lower():
-            await message.reply(f"❌ '{malzeme_adi}' zaten envanterde var. Silmek için /sil, güncellemek için manuel düzenleme yapın.")
+            await message.reply(f"❌ '{malzeme_adi}' zaten envanterde var.")
             return
     
-    # Kategori otomatik belirleme (sıvı mı katı mı)
+    # Kategori belirleme
     if birim.lower() in ['ml', 'l', 'litre']:
         kategori = 'Sıvı'
     elif birim.lower() in ['adet']:
@@ -252,7 +293,6 @@ async def ekle_envanter(message: types.Message):
     else:
         kategori = 'Katı'
     
-    # Yeni malzeme ekle
     yeni_kayit = {
         'Kategori': kategori,
         'Malzeme / Alet': malzeme_adi,
@@ -267,15 +307,13 @@ async def ekle_envanter(message: types.Message):
     
     if stok_kaydet(stoklar):
         await message.reply(f"✅ **'{malzeme_adi}'** envantere eklendi!\n\n📦 Miktar: {miktar} {birim}\n📝 Görevi: {gorev}")
-        
-        # History'ye ekleme işlemini kaydet
         history_ekle("ENVANTERE EKLENDİ", malzeme_adi, miktar, birim)
         
-        # Doğrulama için tekrar oku
+        # Doğrulama
         kontrol = stok_oku()
         for item in kontrol:
             if item.get('Malzeme / Alet') == malzeme_adi:
-                await message.reply(f"✅ Doğrulama: {malzeme_adi} envanterde görünüyor. Miktar: {item.get('Kalan Miktar')} {item.get('Birim')}")
+                await message.reply(f"✅ Doğrulama: {malzeme_adi} envanterde. Miktar: {item.get('Kalan Miktar')} {item.get('Birim')}")
                 return
     else:
         await message.reply("❌ Ekleme sırasında hata oluştu.")
