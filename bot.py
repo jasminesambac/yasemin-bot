@@ -80,12 +80,16 @@ async def start(message: types.Message):
                          "/kaydet_geri_al - Son işlemi geri al\n"
                          "/ekle NPK;1000;gr;Gübre - Yeni malzeme ekle\n"
                          "/sil Test - Malzeme sil (onay için /evet)\n"
+                         "/ph 1 - Son pH ölçümü\n"
+                         "/ph 1 hepsi - Tüm pH ölçümleri (çamur testleri dahil)\n"
+                         "/ph_ekle 1 6.5 - Yeni pH ekle\n"
                          "/test - Bot testi")
 
 @dp.message_handler(commands=['test'])
 async def test(message: types.Message):
     await message.answer("✅ Bot çalışıyor!")
 
+# ==================== STOK ====================
 @dp.message_handler(commands=['stok'])
 async def stok(message: types.Message):
     param = message.get_args()
@@ -139,6 +143,7 @@ async def stok(message: types.Message):
             mesaj += f"• {item.get('Malzeme / Alet')}: {item.get('Kalan Miktar')} {item.get('Birim')}\n"
         await message.reply(mesaj)
 
+# ==================== KAYDET ====================
 @dp.message_handler(commands=['kaydet'])
 async def kaydet(message: types.Message):
     global son_kayit_geri_al
@@ -247,6 +252,7 @@ async def kaydet_geri_al(message: types.Message):
             return
     await message.reply("❌ Malzeme bulunamadı")
 
+# ==================== EKLE ====================
 @dp.message_handler(commands=['ekle'])
 async def ekle_envanter(message: types.Message):
     param = message.get_args()
@@ -296,7 +302,7 @@ async def ekle_envanter(message: types.Message):
     else:
         await message.reply("❌ Ekleme sırasında hata oluştu.")
 
-# ==================== SİLME KOMUTLARI ====================
+# ==================== SİLME ====================
 @dp.message_handler(commands=['sil'])
 async def sil_stok(message: types.Message):
     global silinecek_malzeme
@@ -344,6 +350,74 @@ async def evet_sil(message: types.Message):
         await message.reply("❌ Silme işlemi sırasında hata oluştu.")
     
     silinecek_malzeme = None
+
+# ==================== pH ====================
+@dp.message_handler(commands=['ph_ekle'])
+async def ph_ekle(message: types.Message):
+    param = message.get_args()
+    if not param:
+        await message.reply("Örnek: /ph_ekle 1 6.5\n\nNot eklemek için: /ph_ekle 1 6.5 Çamur testi")
+        return
+    
+    parcalar = param.split(maxsplit=2)
+    if len(parcalar) < 2:
+        await message.reply("Format: /ph_ekle teneke_no pH [not]")
+        return
+    
+    teneke = parcalar[0]
+    ph = parcalar[1]
+    not_metni = parcalar[2] if len(parcalar) > 2 else "Bot ile eklendi"
+    
+    try:
+        with open('ph_records.csv', 'a', encoding='utf-8-sig', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow([tarih_format(), teneke, "-", ph, not_metni])
+        await message.reply(f"✅ pH kaydı eklendi!\n📅 {tarih_format()} - Teneke {teneke} - pH {ph}\n📝 {not_metni}")
+    except Exception as e:
+        await message.reply(f"❌ Hata: {e}")
+
+@dp.message_handler(commands=['ph'])
+async def ph_sorgula(message: types.Message):
+    param = message.get_args()
+    if not param:
+        await message.reply("Örnek: /ph 1 - Son ölçüm\n/ph 1 hepsi - Tüm ölçümler (çamur testleri dahil)")
+        return
+    
+    parcalar = param.split()
+    teneke_no = parcalar[0]
+    tumu = len(parcalar) > 1 and parcalar[1].lower() == 'hepsi'
+    
+    try:
+        with open('ph_records.csv', 'r', encoding='utf-8-sig') as f:
+            reader = csv.DictReader(f, delimiter=',')
+            kayitlar = [row for row in reader if row.get('Teneke_No', '').strip() == teneke_no]
+        
+        if not kayitlar:
+            await message.reply(f"❌ Teneke {teneke_no} için pH kaydı yok.")
+            return
+        
+        if tumu:
+            mesaj = f"📊 **Teneke {teneke_no} - TÜM pH ÖLÇÜMLERİ**\n\n"
+            for k in sorted(kayitlar, key=lambda x: x.get('Tarih', ''), reverse=True):
+                not_str = f" - {k.get('Not', '')}" if k.get('Not') else ""
+                bolge_str = f" ({k.get('Bolge', '-')})" if k.get('Bolge') and k.get('Bolge') != '-' else ""
+                mesaj += f"📅 {k['Tarih']}: pH {k['pH']}{bolge_str}{not_str}\n"
+                if len(mesaj) > 3800:
+                    mesaj += "\n*Devamı için /ph 1 devam*"
+                    break
+            await message.reply(mesaj)
+        else:
+            en_son = max(kayitlar, key=lambda x: x.get('Tarih', ''))
+            not_str = f"\n📝 Not: {en_son.get('Not', '-')}" if en_son.get('Not') else ""
+            bolge_str = f"📍 Bölge: {en_son.get('Bolge', '-')}\n" if en_son.get('Bolge') and en_son.get('Bolge') != '-' else ""
+            await message.reply(
+                f"📊 **Teneke {teneke_no} - Son pH**\n"
+                f"📅 {en_son['Tarih']}\n"
+                f"🔬 pH: {en_son['pH']}\n"
+                f"{bolge_str}{not_str}"
+            )
+    except Exception as e:
+        await message.reply(f"Hata: {e}")
 
 if __name__ == '__main__':
     executor.start_polling(dp, skip_updates=True)
