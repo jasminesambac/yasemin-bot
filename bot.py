@@ -15,10 +15,10 @@ AGNES_API_KEY = os.getenv("AGNES_API_KEY")
 
 # Geçici hafızalar
 silinecek_malzeme = None
-son_kayit_geri_al = None  # Son kayıt için geri alma bilgisi
-stok_uyarilari = {}  # {malzeme_adi: esik_miktar}
-ph_uyarilari = {}    # {teneke_no: esik_ph}
-baglam_metinleri = {}  # {user_id: baglam_metni}
+son_kayit_geri_al = None
+stok_uyarilari = {}
+ph_uyarilari = {}
+baglam_metinleri = {}
 
 # Agnes AI istemcisi
 client = OpenAI(
@@ -38,7 +38,6 @@ def saat_format():
     return datetime.now().strftime("%H:%M")
 
 def mesaj_parcala(metin, uzunluk=4000):
-    """Uzun metni parçalara böler"""
     if len(metin) <= uzunluk:
         return [metin]
     parcalar = []
@@ -47,7 +46,6 @@ def mesaj_parcala(metin, uzunluk=4000):
     return parcalar
 
 def baglam_guncelle(user_id, mesaj, cevap=""):
-    """Kullanıcının konuşma bağlamını günceller"""
     if user_id not in baglam_metinleri:
         baglam_metinleri[user_id] = ""
     
@@ -55,10 +53,17 @@ def baglam_guncelle(user_id, mesaj, cevap=""):
     if cevap:
         baglam_metinleri[user_id] += f"Asistan: {cevap}\n"
     
-    # Son 50 satırı tut (çok uzamasın)
+    # Son 200 satırı tut (artırıldı)
     satirlar = baglam_metinleri[user_id].split('\n')
-    if len(satirlar) > 50:
-        baglam_metinleri[user_id] = '\n'.join(satirlar[-50:])
+    if len(satirlar) > 200:
+        baglam_metinleri[user_id] = '\n'.join(satirlar[-200:])
+
+def ay_cek(tarih_str):
+    """Gün-Ay-Yıl formatından ayı döndürür (01-12)"""
+    try:
+        return tarih_str.split('-')[1]
+    except:
+        return None
 
 # ==================== STOK FONKSİYONLARI ====================
 def stok_oku():
@@ -84,13 +89,6 @@ def stok_kaydet(stok_listesi):
         print(f"Stok kayıt hatası: {e}")
         return False
 
-def stok_bul(malzeme_adi):
-    stoklar = stok_oku()
-    for item in stoklar:
-        if malzeme_adi.lower() in item['Malzeme / Alet'].lower():
-            return item
-    return None
-
 def stoktan_dus(malzeme_adi, miktar, birim):
     global son_kayit_geri_al
     stoklar = stok_oku()
@@ -107,15 +105,16 @@ def stoktan_dus(malzeme_adi, miktar, birim):
                     item['Kullanılan'] = str(kullanilan + miktar_float).replace('.', ',')
                     stok_kaydet(stoklar)
                     
-                    # Geri alma için kaydet
+                    # GERİ ALMA İÇİN KAYDET
                     son_kayit_geri_al = {
                         'malzeme': malzeme_adi,
                         'eski_kalan': eski_kalan,
+                        'yeni_kalan': yeni_kalan,
                         'kullanilan': miktar_float,
-                        'birim': birim
+                        'birim': birim,
+                        'islem_metni': f"{miktar} {birim} {malzeme_adi}"
                     }
                     
-                    # Stok uyarı kontrolü
                     if malzeme_adi in stok_uyarilari and yeni_kalan <= stok_uyarilari[malzeme_adi]:
                         return True, f"{yeni_kalan:.1f} {birim} (⚠️ UYARI: {malzeme_adi} stok eşiğin altında!)"
                     return True, f"{yeni_kalan:.1f} {birim}"
@@ -137,9 +136,20 @@ def kayit_geri_al():
             kullanilan = float(str(item.get('Kullanılan', '0')).replace(',', '.'))
             item['Kullanılan'] = str(kullanilan - son_kayit_geri_al['kullanilan']).replace('.', ',')
             stok_kaydet(stoklar)
+            malzeme = son_kayit_geri_al['malzeme']
+            miktar = son_kayit_geri_al['kullanilan']
+            birim = son_kayit_geri_al['birim']
             son_kayit_geri_al = None
-            return True, f"Geri alındı: {son_kayit_geri_al['malzeme']} +{son_kayit_geri_al['kullanilan']} {son_kayit_geri_al['birim']}"
+            return True, f"Geri alındı: {malzeme} +{miktar:.1f} {birim}"
     return False, "Malzeme bulunamadı"
+
+def parse_metin(text):
+    pattern = r'(\d+(?:\.\d+)?)\s*([a-zA-Zğüşıöç]+)\s+(.+?)(?=\s*\+|\s*$)'
+    malzemeler = []
+    matches = re.findall(pattern, text, re.IGNORECASE)
+    for miktar, birim, ad in matches:
+        malzemeler.append({'miktar': miktar, 'birim': birim, 'ad': ad.strip()})
+    return malzemeler
 
 def islemi_kaydet(islem_metni, malzemeler):
     try:
@@ -153,14 +163,6 @@ def islemi_kaydet(islem_metni, malzemeler):
         print(f"History kayıt hatası: {e}")
         return False
 
-def parse_metin(text):
-    pattern = r'(\d+(?:\.\d+)?)\s*([a-zA-Zğüşıöç]+)\s+(.+?)(?=\s*\+|\s*$)'
-    malzemeler = []
-    matches = re.findall(pattern, text, re.IGNORECASE)
-    for miktar, birim, ad in matches:
-        malzemeler.append({'miktar': miktar, 'birim': birim, 'ad': ad.strip()})
-    return malzemeler
-
 # ==================== HATIRLATICI FONKSİYONLARI ====================
 def hatirlatma_ekle(tarih, saat, islem):
     try:
@@ -173,9 +175,10 @@ def hatirlatma_ekle(tarih, saat, islem):
         return False
 
 # ==================== HAVA DURUMU ====================
-def hava_durumu(sehir="Istanbul"):
+def hava_durumu(yer):
     try:
-        url = f"https://wttr.in/{sehir}?format=%C+%t+%w+%h"
+        # Celsius ve km/h için parametreler
+        url = f"https://wttr.in/{yer}?format=%C+%t+%w+%h&m"
         response = requests.get(url, timeout=10)
         return response.text.strip()
     except:
@@ -186,9 +189,10 @@ def ask_agnes(question, user_id=None):
     try:
         messages = []
         
-        # Bağlam varsa ekle
         if user_id and user_id in baglam_metinleri and baglam_metinleri[user_id]:
-            messages.append({"role": "system", "content": f"Önceki konuşma geçmişi:\n{baglam_metinleri[user_id][-1000:]}"})
+            # Son 3000 karakteri al (daha fazla)
+            baglam = baglam_metinleri[user_id][-3000:]
+            messages.append({"role": "system", "content": f"Önceki konuşma geçmişi:\n{baglam}"})
         
         messages.append({"role": "user", "content": question})
         
@@ -199,7 +203,6 @@ def ask_agnes(question, user_id=None):
         )
         cevap = response.choices[0].message.content
         
-        # Telegram sınırı için kısalt
         if len(cevap) > 4000:
             cevap = cevap[:3950] + "\n\n[Devamı kesildi...]"
         
@@ -214,11 +217,9 @@ def gunluk_rapor():
         with open('history.csv', 'r', encoding='utf-8-sig') as f:
             reader = csv.reader(f)
             satirlar = list(reader)
-        
         gunun_islemleri = [row for row in satirlar[1:] if row[0] == bugun]
         if not gunun_islemleri:
             return "Bugün hiç işlem yapılmamış."
-        
         rapor = f"📅 **{bugun} GÜNLÜK RAPOR**\n\n"
         for row in gunun_islemleri[:20]:
             rapor += f"• {row[1]}: {row[2][:50]}\n"
@@ -226,26 +227,50 @@ def gunluk_rapor():
     except:
         return "Rapor alınamadı."
 
-def aylik_rapor(ay_str):
+def aylik_rapor(ay_param):
     try:
         with open('history.csv', 'r', encoding='utf-8-sig') as f:
             reader = csv.reader(f)
             satirlar = list(reader)
         
-        ay, yil = ay_str.split('-')
-        ay_kayitlari = [row for row in satirlar[1:] if row[0].endswith(f"-{ay}-{yil}")]
+        # Ay eşleme
+        ay_map = {'01': 'Ocak', '02': 'Şubat', '03': 'Mart', '04': 'Nisan', '05': 'Mayıs', '06': 'Haziran',
+                  '07': 'Temmuz', '08': 'Ağustos', '09': 'Eylül', '10': 'Ekim', '11': 'Kasım', '12': 'Aralık'}
+        
+        # Gelen parametre 05-2026 veya Mayıs olabilir
+        if re.match(r'\d{2}-\d{4}', ay_param):
+            ay_no = ay_param[:2]
+            yil = ay_param[3:]
+            ay_adi = ay_map.get(ay_no, ay_no)
+        else:
+            # Türkçe ay ismini bul
+            ters_ay_map = {v: k for k, v in ay_map.items()}
+            ay_no = ters_ay_map.get(ay_param.capitalize())
+            if not ay_no:
+                return f"Geçersiz ay: {ay_param}. Örnek: 05-2026 veya Mayıs"
+            yil = datetime.now().strftime("%Y")
+            ay_param = f"{ay_no}-{yil}"
+            ay_adi = ay_param.capitalize()
+        
+        # Tarihleri kontrol et
+        ay_kayitlari = []
+        for row in satirlar[1:]:
+            if len(row) >= 1 and row[0].endswith(ay_param):
+                ay_kayitlari.append(row)
         
         if not ay_kayitlari:
-            return f"{ay_str} ayında işlem bulunamadı."
+            return f"{ay_adi} {yil} ayında işlem bulunamadı."
         
-        rapor = f"📊 **{ay_str} AYLIK RAPOR**\n\n"
-        rapor += f"📝 Toplam işlem: {len(ay_kayitlari)}\n"
+        rapor = f"📊 **{ay_adi} {yil} AYLIK RAPOR**\n\n"
+        rapor += f"📝 Toplam işlem: {len(ay_kayitlari)}\n\n"
         rapor += f"🔧 İşlemler:\n"
         for row in ay_kayitlari[:15]:
-            rapor += f"   • {row[1]}\n"
+            rapor += f"   • {row[0]} - {row[1]}\n"
+        if len(ay_kayitlari) > 15:
+            rapor += f"\n*Toplam {len(ay_kayitlari)} işlem var. Detay için /gecmis {ay_param}"
         return rapor
-    except:
-        return "Rapor alınamadı."
+    except Exception as e:
+        return f"Rapor alınamadı: {e}"
 
 # ==================== KOMUTLAR ====================
 @dp.message_handler(commands=['start'])
@@ -255,21 +280,20 @@ async def start(message: types.Message):
                          "/stok [malzeme] - Stok sorgula\n"
                          "/kaydet [işlem] - Stok düş ve kaydet\n"
                          "/kaydet_geri_al - Son kaydı geri al\n"
-                         "/redo - Silinen işlemi geri çağır\n"
+                         "/redo - Geri alınanı yeniden yap\n"
                          "/ekle Ad;Miktar;Birim;Görev - Yeni malzeme ekle\n"
-                         "/ph [teneke] - pH sorgula (hepsi için /ph 1 hepsi)\n"
+                         "/ph [teneke] - pH sorgula\n/ph_ekle [teneke] [pH] [tarih] - pH ekle\n"
                          "/gecmis [ay/hepsi] - Geçmiş işlemler\n"
                          "/sil [malzeme] - Malzeme sil\n"
                          "/hatirlat [gun-ay-yil] [saat] [islem] - Hatırlatma ekle\n"
                          "/hatirlat_sil [id] - Hatırlatma sil\n"
                          "/hatirlatmalar - Bekleyen hatırlatmalar\n"
                          "/rapor_gunluk - Bugünün raporu\n"
-                         "/rapor_aylik 05-2026 - Aylık rapor\n"
+                         "/rapor_aylik [05-2026] - Aylık rapor\n"
                          "/istatistik - Genel istatistik\n"
                          "/stok_uyari [malzeme] [esik] - Stok uyarısı\n"
                          "/ph_uyari [teneke] [esik_ph] - pH uyarısı\n"
-                         "/hava [sehir] - Hava durumu\n"
-                         "/toplu_kaydet - Toplu işlem (txt)\n"
+                         "/hava [yer] - Hava durumu (örn: /hava Kadıköy)\n"
                          "/yedekle - CSV'leri yedekle\n"
                          "/baglam_al - Konuşma özetini al\n"
                          "/baglam_sifirla - Bağlamı sıfırla\n"
@@ -292,7 +316,6 @@ async def sor(message: types.Message):
     cevap = ask_agnes(soru, user_id)
     baglam_guncelle(user_id, soru, cevap)
     
-    # Uzun cevabı parçala
     for parca in mesaj_parcala(cevap):
         await bot.send_message(chat_id=message.chat.id, text=f"🤖 **Agnes AI:**\n\n{parca}")
 
@@ -346,6 +369,35 @@ async def kaydet_geri_al(message: types.Message):
     basari, mesaj = kayit_geri_al()
     await message.reply(f"✅ {mesaj}" if basari else f"❌ {mesaj}")
 
+@dp.message_handler(commands=['redo'])
+async def redo(message: types.Message):
+    global son_kayit_geri_al
+    
+    if not son_kayit_geri_al:
+        await message.reply("❌ Yeniden yapılacak işlem yok. Önce /kaydet_geri_al yapmalısın.")
+        return
+    
+    stoklar = stok_oku()
+    for item in stoklar:
+        if son_kayit_geri_al['malzeme'].lower() in item['Malzeme / Alet'].lower():
+            kalan = float(str(item['Kalan Miktar']).replace(',', '.'))
+            yeni_kalan = kalan - son_kayit_geri_al['kullanilan']
+            if yeni_kalan < 0:
+                await message.reply("❌ Stok yetersiz, yeniden yapılamıyor.")
+                return
+            item['Kalan Miktar'] = str(yeni_kalan).replace('.', ',')
+            kullanilan = float(str(item.get('Kullanılan', '0')).replace(',', '.'))
+            item['Kullanılan'] = str(kullanilan + son_kayit_geri_al['kullanilan']).replace('.', ',')
+            stok_kaydet(stoklar)
+            await message.reply(f"✅ İşlem yeniden yapıldı:\n{son_kayit_geri_al['malzeme']} -{son_kayit_geri_al['kullanilan']} {son_kayit_geri_al['birim']}")
+            
+            tarih = tarih_format()
+            with open('history.csv', 'a', encoding='utf-8-sig', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow([tarih, "REDO", son_kayit_geri_al['islem_metni'], "-", "Bot ile yeniden yapıldı"])
+            return
+    await message.reply("❌ Malzeme bulunamadı.")
+
 @dp.message_handler(commands=['ekle'])
 async def ekle_envanter(message: types.Message):
     param = message.get_args()
@@ -385,6 +437,30 @@ async def ekle_envanter(message: types.Message):
     else:
         await message.reply("❌ Ekleme hatası.")
 
+@dp.message_handler(commands=['ph_ekle'])
+async def ph_ekle(message: types.Message):
+    param = message.get_args()
+    if not param:
+        await message.reply("Örnek: /ph_ekle 1 6.5 11-06-2026")
+        return
+    
+    parcalar = param.split()
+    if len(parcalar) < 2:
+        await message.reply("Format: /ph_ekle teneke_no pH [tarih]")
+        return
+    
+    teneke = parcalar[0]
+    ph = parcalar[1]
+    tarih = parcalar[2] if len(parcalar) > 2 else tarih_format()
+    
+    try:
+        with open('ph_records.csv', 'a', encoding='utf-8-sig', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow([tarih, teneke, "Genel", ph, "Bot ile eklendi"])
+        await message.reply(f"✅ pH kaydı eklendi!\n📅 {tarih} - Teneke {teneke} - pH {ph}")
+    except Exception as e:
+        await message.reply(f"❌ Hata: {e}")
+
 @dp.message_handler(commands=['ph'])
 async def ph_sorgula(message: types.Message):
     param = message.get_args()
@@ -398,11 +474,21 @@ async def ph_sorgula(message: types.Message):
     
     try:
         with open('ph_records.csv', 'r', encoding='utf-8-sig') as f:
-            reader = csv.DictReader(f, delimiter=',')
-            teneke_kayitlari = [row for row in reader if row.get('Teneke_No', '') == teneke_no]
+            # Önce delimiter'ı dene
+            content = f.read()
+            if ';' in content[:100]:
+                delimiter = ';'
+            else:
+                delimiter = ','
+            f.seek(0)
+            reader = csv.DictReader(f, delimiter=delimiter)
+            teneke_kayitlari = []
+            for row in reader:
+                if row.get('Teneke_No', '').strip() == teneke_no:
+                    teneke_kayitlari.append(row)
         
         if not teneke_kayitlari:
-            await message.reply(f"❌ Teneke {teneke_no} için pH kaydı yok.")
+            await message.reply(f"❌ Teneke {teneke_no} için pH kaydı yok.\n\n📌 Not: Çamur testleri 'Tarih,Teneke_No,Bolge,pH,Not' formatında olmalı.")
             return
         
         if tumu:
@@ -415,7 +501,7 @@ async def ph_sorgula(message: types.Message):
             en_son = max(teneke_kayitlari, key=lambda x: x.get('Tarih', ''))
             await message.reply(f"📊 **Teneke {teneke_no} - Son pH**\n📅 {en_son['Tarih']}\n🔬 pH: {en_son['pH']}\n📍 {en_son.get('Bolge', '-')}")
     except Exception as e:
-        await message.reply(f"Hata: {e}")
+        await message.reply(f"Hata: {e}\n\nCSV formatı: Tarih,Teneke_No,Bolge,pH,Not")
 
 @dp.message_handler(commands=['gecmis'])
 async def gecmis(message: types.Message):
@@ -445,10 +531,27 @@ async def gecmis(message: types.Message):
                     mesaj += f"📅 {row[0]} - {row[1]}\n   {row[2][:100]}\n\n"
                 await message.reply(mesaj[:4000])
         else:
+            # Aya göre filtre (örn: 05-2026 veya mayıs)
+            ay_map = {'01': 'Ocak', '02': 'Şubat', '03': 'Mart', '04': 'Nisan', '05': 'Mayıs', '06': 'Haziran',
+                      '07': 'Temmuz', '08': 'Ağustos', '09': 'Eylül', '10': 'Ekim', '11': 'Kasım', '12': 'Aralık'}
+            ters_ay_map = {v.lower(): k for k, v in ay_map.items()}
+            
+            if re.match(r'\d{2}-\d{4}', param):
+                ay_no = param[:2]
+                yil = param[3:]
+            elif param.lower() in ters_ay_map:
+                ay_no = ters_ay_map[param.lower()]
+                yil = datetime.now().strftime("%Y")
+                param = f"{ay_no}-{yil}"
+            else:
+                await message.reply("Geçersiz format. Örnek: /gecmis 05-2026 veya /gecmis mayıs")
+                return
+            
             ay_kayitlari = [row for row in veriler if row[0].endswith(param)]
             if not ay_kayitlari:
-                await message.reply(f"❌ {param} için kayıt yok.")
+                await message.reply(f"❌ {param} için kayıt bulunamadı.")
                 return
+            
             mesaj = f"📜 **{param} İŞLEMLERİ**\n\n"
             for row in ay_kayitlari:
                 mesaj += f"📅 {row[0]} - {row[1]}\n   {row[2][:100]}\n\n"
@@ -513,9 +616,40 @@ async def hatirlat(message: types.Message):
     
     tarih, saat, islem = parcalar
     if hatirlatma_ekle(tarih, saat, islem):
-        await message.reply(f"✅ Hatırlatma eklendi!\n📅 {tarih} {saat}\n📝 {islem}")
+        await message.reply(f"✅ Hatırlatma eklendi!\n📅 {tarih} {saat}\n📝 {islem}\n\n⚠️ Not: Otomatik mesaj için zamanlayıcı henüz aktif değil.")
     else:
         await message.reply("❌ Hata.")
+
+@dp.message_handler(commands=['hatirlat_sil'])
+async def hatirlat_sil(message: types.Message):
+    param = message.get_args()
+    if not param:
+        await message.reply("Örnek: /hatirlat_sil 1\n\nID'yi /hatirlatmalar ile görebilirsin.")
+        return
+    
+    try:
+        with open('reminders.csv', 'r', encoding='utf-8-sig') as f:
+            reader = csv.reader(f)
+            satirlar = list(reader)
+        
+        if len(satirlar) <= 1:
+            await message.reply("❌ Hatırlatma yok.")
+            return
+        
+        idx = int(param)
+        if idx < 1 or idx >= len(satirlar):
+            await message.reply("❌ Geçersiz ID.")
+            return
+        
+        silinen = satirlar.pop(idx)
+        
+        with open('reminders.csv', 'w', encoding='utf-8-sig', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerows(satirlar)
+        
+        await message.reply(f"✅ Hatırlatma silindi:\n{silinen[0]} {silinen[1]} - {silinen[2]}")
+    except:
+        await message.reply("❌ Hata oluştu.")
 
 @dp.message_handler(commands=['hatirlatmalar'])
 async def list_hatirlatmalar(message: types.Message):
@@ -525,17 +659,21 @@ async def list_hatirlatmalar(message: types.Message):
             satirlar = list(reader)
         
         if len(satirlar) <= 1:
-            await message.reply("Hatırlatma yok.")
+            await message.reply("Henüz hatırlatma yok. /hatirlat ile ekleyebilirsin.")
             return
         
-        bekleyenler = [row for row in satirlar[1:] if len(row) >= 4 and row[3] == "bekliyor"]
+        bekleyenler = []
+        for i, row in enumerate(satirlar[1:], 1):
+            if len(row) >= 4 and row[3] == "bekliyor":
+                bekleyenler.append((i, row))
+        
         if not bekleyenler:
             await message.reply("✅ Bekleyen hatırlatma yok.")
             return
         
         mesaj = "📅 **BEKLEYEN HATIRLATMALAR**\n\n"
-        for i, row in enumerate(bekleyenler, 1):
-            mesaj += f"{i}. {row[0]} {row[1]} - {row[2]}\n"
+        for i, row in bekleyenler:
+            mesaj += f"**ID: {i}** | {row[0]} {row[1]} - {row[2]}\n"
         await message.reply(mesaj[:4000])
     except:
         await message.reply("Dosya okuma hatası.")
@@ -549,7 +687,7 @@ async def rapor_gunluk(message: types.Message):
 async def rapor_aylik(message: types.Message):
     ay = message.get_args()
     if not ay:
-        await message.reply("Örnek: /rapor_aylik 05-2026")
+        await message.reply("Örnek: /rapor_aylik 05-2026 veya /rapor_aylik mayıs")
         return
     rapor = aylik_rapor(ay)
     await message.reply(rapor)
@@ -564,23 +702,22 @@ async def istatistik(message: types.Message):
         veriler = satirlar[1:]
         toplam_islem = len(veriler)
         
-        # En çok kullanılan malzemeleri bul
         malzeme_sayilari = {}
         for row in veriler:
             if len(row) >= 3:
                 for m in row[2].split(','):
-                    malzeme_adi = m.strip().split(' ')[-1]
+                    malzeme_adi = m.strip().split(' ')[-1] if m.strip() else "bilinmiyor"
                     malzeme_sayilari[malzeme_adi] = malzeme_sayilari.get(malzeme_adi, 0) + 1
         
-        en_cok = sorted(malzeme_sayilari.items(), key=lambda x: x[1], reverse=True)[:3]
+        en_cok = sorted(malzeme_sayilari.items(), key=lambda x: x[1], reverse=True)[:5]
         istatistik = f"📊 **GENEL İSTATİSTİK**\n\n"
-        istatistik += f"📝 Toplam işlem: {toplam_islem}\n"
-        istatistik += f"🔧 En çok kullanılan:\n"
+        istatistik += f"📝 Toplam işlem: {toplam_islem}\n\n"
+        istatistik += f"🔧 En çok kullanılan malzemeler:\n"
         for malzeme, sayi in en_cok:
             istatistik += f"   • {malzeme}: {sayi} kez\n"
         await message.reply(istatistik)
-    except:
-        await message.reply("İstatistik alınamadı.")
+    except Exception as e:
+        await message.reply(f"İstatistik alınamadı: {e}")
 
 @dp.message_handler(commands=['stok_uyari'])
 async def stok_uyari(message: types.Message):
@@ -594,7 +731,7 @@ async def stok_uyari(message: types.Message):
         return
     malzeme, esik = parcalar[0], float(parcalar[1])
     stok_uyarilari[malzeme] = esik
-    await message.reply(f"✅ Uyarı eklendi: {malzeme} {esik} gr altında uyar")
+    await message.reply(f"✅ Uyarı eklendi: {malzeme} {esik} gr altında uyarı verilecek.")
 
 @dp.message_handler(commands=['ph_uyari'])
 async def ph_uyari(message: types.Message):
@@ -608,15 +745,15 @@ async def ph_uyari(message: types.Message):
         return
     teneke, esik = parcalar[0], float(parcalar[1])
     ph_uyarilari[teneke] = esik
-    await message.reply(f"✅ pH uyarısı eklendi: Teneke {teneke} pH {esik} altında/üstünde uyar")
+    await message.reply(f"✅ pH uyarısı eklendi: Teneke {teneke} pH {esik} altında/üstünde uyarı verilecek.")
 
 @dp.message_handler(commands=['hava'])
 async def hava(message: types.Message):
-    sehir = message.get_args()
-    if not sehir:
-        sehir = "Istanbul"
-    durum = hava_durumu(sehir)
-    await message.reply(f"🌤️ **{sehir} HAVA DURUMU**\n\n{durum}")
+    yer = message.get_args()
+    if not yer:
+        yer = "Istanbul"
+    durum = hava_durumu(yer)
+    await message.reply(f"🌤️ **{yer} HAVA DURUMU**\n\n{durum}\n\n(°C, km/h)")
 
 @dp.message_handler(commands=['yedekle'])
 async def yedekle(message: types.Message):
@@ -635,7 +772,9 @@ async def yedekle(message: types.Message):
 async def baglam_al(message: types.Message):
     user_id = str(message.from_user.id)
     if user_id in baglam_metinleri and baglam_metinleri[user_id]:
-        await message.reply(f"📝 **Konuşma özeti:**\n\n{baglam_metinleri[user_id][-2000:]}")
+        baglam = baglam_metinleri[user_id]
+        for parca in mesaj_parcala(baglam, 4000):
+            await message.reply(f"📝 **Konuşma geçmişi:**\n\n{parca}")
     else:
         await message.reply("Henüz konuşma geçmişi yok.")
 
@@ -649,7 +788,7 @@ async def baglam_sifirla(message: types.Message):
 async def baglam_goster(message: types.Message):
     user_id = str(message.from_user.id)
     if user_id in baglam_metinleri and baglam_metinleri[user_id]:
-        for parca in mesaj_parcala(baglam_metinleri[user_id]):
+        for parca in mesaj_parcala(baglam_metinleri[user_id], 4000):
             await message.reply(f"📝 **Bağlam:**\n\n{parca}")
     else:
         await message.reply("Henüz bağlam yok.")
