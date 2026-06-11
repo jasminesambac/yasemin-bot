@@ -57,7 +57,7 @@ async def stok(message: types.Message):
         cevap += f"📊 Kalan: {malzeme_bulundu.get('Kalan Miktar')} {malzeme_bulundu.get('Birim')}\n"
         cevap += f"📝 Görevi: {malzeme_bulundu.get('Görevi / Not', '-')}\n\n"
         
-        # History'den geçmiş kullanımları bul
+        # History'den TÜM geçmiş kullanımları bul
         try:
             with open('history.csv', 'r', encoding='utf-8-sig') as f:
                 reader = csv.reader(f)
@@ -69,9 +69,11 @@ async def stok(message: types.Message):
                     kayitlar.append(row)
             
             if kayitlar:
-                cevap += "📜 **SON KULLANIMLAR:**\n"
-                for row in kayitlar[-5:][::-1]:
+                cevap += "📜 **TÜM KULLANIMLAR:**\n"
+                for row in kayitlar:
                     cevap += f"   • {row[0]}: {row[2]}\n"
+                if len(kayitlar) > 20:
+                    cevap += f"\n*Toplam {len(kayitlar)} kayıt var.*"
             else:
                 cevap += "📜 **Geçmiş kullanım kaydı yok.**"
             
