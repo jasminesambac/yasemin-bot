@@ -612,21 +612,20 @@ async def gecmis(message: types.Message):
             await message.reply(mesaj[:4000])
         
         elif param.lower() == 'hepsi':
-            # Tüm kayıtları ID'li göster (parçalı)
+            # Tüm kayıtları ID'li göster (parçalı) - TARİHLER DÜZELTİLDİ
             for i in range(0, len(veriler), 10):
                 blok = veriler[i:i+10]
                 mesaj = "📜 **TÜM İŞLEMLER (ID ile)**\n\n"
                 for j, row in enumerate(blok):
                     kayit_id = i + j + 1
                     mesaj += f"**ID: {kayit_id}** | 📅 {row[0]} - {row[1]}\n   {row[2][:100]}\n\n"
-                for parca in mesaj_parcala(mesaj):
-                    await message.reply(parca)
+                await message.reply(mesaj[:4000])
         
         else:
-            # Tarihe göre filtrele (ID'li)
+            # Tarihe göre filtrele (GG-AA-YYYY formatında)
             tarih_kayitlari = [(i+1, row) for i, row in enumerate(veriler) if row[0] == param]
             if not tarih_kayitlari:
-                await message.reply(f"❌ {param} tarihinde kayıt bulunamadı.")
+                await message.reply(f"❌ {param} tarihinde kayıt bulunamadı.\n\nTarih formatı: GG-AA-YYYY (örnek: 11-06-2026)")
                 return
             
             mesaj = f"📜 **{param} TARİHİNDEKİ İŞLEMLER (ID ile)**\n\n"
