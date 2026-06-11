@@ -98,7 +98,7 @@ async def start(message: types.Message):
                          "/ph_sil 1 - Son pH kaydını sil\n"
                          "/gecmis - Son 10 işlem (ID ile)\n"
                          "/gecmis hepsi - Tüm geçmiş (ID ile)\n"
-                         "/gecmis 14-05-2026 - Tarihli işlemler\n"
+                         "/gecmis 11-06-2026 - Tarihli işlemler\n"
                          "/gecmis_sil 5 - ID ile işlem sil (onay için /gecmis_evet)\n"
                          "/test - Bot testi")
 
@@ -603,6 +603,7 @@ async def gecmis(message: types.Message):
         veriler = satirlar[1:]
         
         if not param:
+            # Son 10 kayıt (ID'li)
             sonlar = veriler[-10:][::-1]
             mesaj = "📜 **SON 10 İŞLEM (ID ile)**\n\n"
             for i, row in enumerate(sonlar, 1):
@@ -611,6 +612,7 @@ async def gecmis(message: types.Message):
             await message.reply(mesaj[:4000])
         
         elif param.lower() == 'hepsi':
+            # Tüm kayıtları ID'li göster (parçalı) - TARİHLER DÜZELTİLDİ
             for i in range(0, len(veriler), 10):
                 blok = veriler[i:i+10]
                 mesaj = "📜 **TÜM İŞLEMLER (ID ile)**\n\n"
@@ -620,22 +622,10 @@ async def gecmis(message: types.Message):
                 await message.reply(mesaj[:4000])
         
         else:
-            # Format dönüştürme: hem GG-AA-YYYY hem YYYY-AA-GG dene
-            aranacak_format = param
-            tarih_kayitlari = [(i+1, row) for i, row in enumerate(veriler) if row[0] == aranacak_format]
-            
-            if not tarih_kayitlari and '-' in param:
-                parcalar = param.split('-')
-                if len(parcalar) == 3:
-                    if len(parcalar[0]) == 4:  # YYYY-AA-GG ise
-                        ters_param = f"{parcalar[2]}-{parcalar[1]}-{parcalar[0]}"
-                        tarih_kayitlari = [(i+1, row) for i, row in enumerate(veriler) if row[0] == ters_param]
-                    else:  # GG-AA-YYYY ise
-                        ters_param = f"{parcalar[2]}-{parcalar[1]}-{parcalar[0]}"
-                        tarih_kayitlari = [(i+1, row) for i, row in enumerate(veriler) if row[0] == ters_param]
-            
+            # Tarihe göre filtrele (GG-AA-YYYY formatında)
+            tarih_kayitlari = [(i+1, row) for i, row in enumerate(veriler) if row[0] == param]
             if not tarih_kayitlari:
-                await message.reply(f"❌ {param} tarihinde kayıt bulunamadı.\n\nDene: /gecmis 14-05-2026 veya /gecmis 2026-05-14")
+                await message.reply(f"❌ {param} tarihinde kayıt bulunamadı.\n\nTarih formatı: GG-AA-YYYY (örnek: 11-06-2026)")
                 return
             
             mesaj = f"📜 **{param} TARİHİNDEKİ İŞLEMLER (ID ile)**\n\n"
@@ -656,4 +646,86 @@ async def gecmis_sil(message: types.Message):
         return
     
     try:
-        with open('history.csv', 'r', encoding
+        with open('history.csv', 'r', encoding='utf-8-sig') as f:
+            reader = csv.reader(f)
+            satirlar = list(reader)
+        
+        if len(satirlar) <= 1:
+            await message.reply("❌ Silinecek kayıt yok.")
+            return
+        
+        basliklar = satirlar[0]
+        veriler = satirlar[1:]
+        
+        if param.lower() == 'hepsi':
+            silinecek_gecmis_hepsi = True
+            await message.reply(f"⚠️ **TÜM geçmiş kayıtları** silinecek ({len(veriler)} kayıt).\n\nBu işlem GERİ DÖNÜŞÜMSÜZDÜR!\n\n30 saniye içinde `/gecmis_evet` yazın.")
+            
+            import asyncio
+            await asyncio.sleep(30)
+            if silinecek_gecmis_hepsi:
+                silinecek_gecmis_hepsi = None
+                await message.reply("⏰ Silme iptal edildi.")
+            return
+        
+        try:
+            kayit_id = int(param)
+            if kayit_id < 1 or kayit_id > len(veriler):
+                await message.reply(f"❌ Geçersiz ID. 1 ile {len(veriler)} arasında bir sayı girin.")
+                return
+            
+            idx = kayit_id - 1
+            silinecek_gecmis_id = (idx, veriler[idx])
+            await message.reply(f"⚠️ **ID: {kayit_id}** kaydı silinecek:\n\n📅 {veriler[idx][0]} - {veriler[idx][1]}\n   {veriler[idx][2][:200]}\n\nBu işlem GERİ DÖNÜŞÜMSÜZDÜR!\n\n30 saniye içinde `/gecmis_evet` yazın.")
+            
+            import asyncio
+            await asyncio.sleep(30)
+            if silinecek_gecmis_id == (idx, veriler[idx]):
+                silinecek_gecmis_id = None
+                await message.reply("⏰ Silme iptal edildi.")
+            return
+        except ValueError:
+            await message.reply("❌ ID sayı olmalı. Örnek: /gecmis_sil 5")
+            
+    except Exception as e:
+        await message.reply(f"❌ Hata: {e}")
+
+@dp.message_handler(commands=['gecmis_evet'])
+async def gecmis_evet(message: types.Message):
+    global silinecek_gecmis_id, silinecek_gecmis_hepsi
+    try:
+        with open('history.csv', 'r', encoding='utf-8-sig') as f:
+            reader = csv.reader(f)
+            satirlar = list(reader)
+        
+        basliklar = satirlar[0]
+        veriler = satirlar[1:]
+        
+        if silinecek_gecmis_hepsi:
+            with open('history.csv', 'w', encoding='utf-8-sig', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow(basliklar)
+            await message.reply("✅ Tüm geçmiş kayıtları silindi.")
+            silinecek_gecmis_hepsi = None
+            return
+        
+        if silinecek_gecmis_id:
+            idx, silinen = silinecek_gecmis_id
+            veriler.pop(idx)
+            with open('history.csv', 'w', encoding='utf-8-sig', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow(basliklar)
+                writer.writerows(veriler)
+            await message.reply(f"✅ Kayıt silindi:\n📅 {silinen[0]} - {silinen[1]}\n   {silinen[2][:200]}")
+            silinecek_gecmis_id = None
+            return
+        
+        await message.reply("❌ Silinecek kayıt yok. Önce /gecmis_sil komutunu kullanın.")
+        
+    except Exception as e:
+        await message.reply(f"❌ Hata: {e}")
+        silinecek_gecmis_id = None
+        silinecek_gecmis_hepsi = None
+
+if __name__ == '__main__':
+    executor.start_polling(dp, skip_updates=True)
