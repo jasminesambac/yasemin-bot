@@ -53,11 +53,21 @@ def history_ekle(islem, malzeme_adi, miktar, birim):
         print(f"History kayıt hatası: {e}")
         return False
 
+def malzeme_bul(aranan, stoklar):
+    """Kısmi eşleme ile malzeme bulur (örn: 'humik' -> 'Hümik Asit')"""
+    aranan = aranan.lower()
+    eslesenler = []
+    for item in stoklar:
+        malzeme_adi = item.get('Malzeme / Alet', '').lower()
+        if aranan in malzeme_adi:
+            eslesenler.append(item)
+    return eslesenler
+
 @dp.message_handler(commands=['start'])
 async def start(message: types.Message):
     await message.answer("🌿 Bot çalışıyor!\n\n"
                          "/stok - Envanter listesi\n"
-                         "/stok NPK - Malzeme sorgula + geçmiş\n"
+                         "/stok humik - Malzeme sorgula (kısmi eşleme)\n"
                          "/kaydet 5 gr NPK - Stoktan düş ve kaydet\n"
                          "/kaydet_geri_al - Son işlemi geri al\n"
                          "/test - Bot testi")
@@ -76,42 +86,50 @@ async def stok(message: types.Message):
         return
     
     if param:
-        malzeme_bulundu = None
-        for item in stoklar:
-            if param.lower() in item.get('Malzeme / Alet', '').lower():
-                malzeme_bulundu = item
-                break
+        eslesenler = malzeme_bul(param, stoklar)
         
-        if not malzeme_bulundu:
-            await message.reply(f"❌ '{param}' envanterde bulunamadı.")
+        if not eslesenler:
+            await message.reply(f"❌ '{param}' ile eşleşen malzeme bulunamadı.")
             return
         
-        cevap = f"📦 **{malzeme_bulundu.get('Malzeme / Alet')}**\n"
-        cevap += f"📊 Kalan: {malzeme_bulundu.get('Kalan Miktar')} {malzeme_bulundu.get('Birim')}\n"
-        cevap += f"📝 Görevi: {malzeme_bulundu.get('Görevi / Not', '-')}\n\n"
-        
-        try:
-            with open('history.csv', 'r', encoding='utf-8-sig') as f:
-                reader = csv.reader(f)
-                satirlar = list(reader)
+        # Eğer tek bir malzeme eşleştiyse detaylı göster
+        if len(eslesenler) == 1:
+            item = eslesenler[0]
+            cevap = f"📦 **{item.get('Malzeme / Alet')}**\n"
+            cevap += f"📊 Kalan: {item.get('Kalan Miktar')} {item.get('Birim')}\n"
+            cevap += f"📝 Görevi: {item.get('Görevi / Not', '-')}\n\n"
             
-            kayitlar = []
-            for row in satirlar[1:]:
-                if len(row) >= 3 and param.lower() in row[2].lower():
-                    kayitlar.append(row)
+            # History'den geçmiş kullanımları bul
+            try:
+                with open('history.csv', 'r', encoding='utf-8-sig') as f:
+                    reader = csv.reader(f)
+                    satirlar = list(reader)
+                
+                kayitlar = []
+                for row in satirlar[1:]:
+                    if len(row) >= 3 and param.lower() in row[2].lower():
+                        kayitlar.append(row)
+                
+                if kayitlar:
+                    cevap += "📜 **TÜM KULLANIMLAR:**\n"
+                    for row in kayitlar:
+                        cevap += f"   • {row[0]}: {row[2]}\n"
+                    if len(kayitlar) > 20:
+                        cevap += f"\n*Toplam {len(kayitlar)} kayıt var.*"
+                else:
+                    cevap += "📜 **Geçmiş kullanım kaydı yok.**"
+            except:
+                cevap += "📜 History dosyası okunamadı."
             
-            if kayitlar:
-                cevap += "📜 **TÜM KULLANIMLAR:**\n"
-                for row in kayitlar:
-                    cevap += f"   • {row[0]}: {row[2]}\n"
-                if len(kayitlar) > 20:
-                    cevap += f"\n*Toplam {len(kayitlar)} kayıt var.*"
-            else:
-                cevap += "📜 **Geçmiş kullanım kaydı yok.**"
-        except:
-            cevap += "📜 History dosyası okunamadı."
-        
-        await message.reply(cevap)
+            await message.reply(cevap)
+        else:
+            # Birden fazla malzeme eşleşti, liste olarak göster
+            cevap = f"🔍 **'{param}' için bulunan malzemeler:**\n\n"
+            for item in eslesenler[:10]:
+                cevap += f"• {item.get('Malzeme / Alet')}: {item.get('Kalan Miktar')} {item.get('Birim')}\n"
+            if len(eslesenler) > 10:
+                cevap += f"\n*Toplam {len(eslesenler)} malzeme var. Daha detaylı arama yapın.*"
+            await message.reply(cevap)
     else:
         mesaj = "📦 **ENVANTER LİSTESİ**\n\n"
         for item in stoklar[:25]:
@@ -134,44 +152,54 @@ async def kaydet(message: types.Message):
     try:
         miktar = float(parcalar[0])
         birim = parcalar[1]
-        malzeme = " ".join(parcalar[2:])
+        malzeme_aranan = " ".join(parcalar[2:])
     except:
         await message.reply("Hatalı format. Örnek: /kaydet 5 gr NPK")
         return
     
     stoklar = stok_oku()
-    for item in stoklar:
-        if malzeme.lower() in item.get('Malzeme / Alet', '').lower():
-            try:
-                kalan = float(str(item['Kalan Miktar']).replace(',', '.'))
-                if kalan >= miktar:
-                    yeni_kalan = kalan - miktar
-                    eski_kalan = kalan
-                    item['Kalan Miktar'] = str(yeni_kalan).replace('.', ',')
-                    kullanilan = float(str(item.get('Kullanılan', '0')).replace(',', '.'))
-                    item['Kullanılan'] = str(kullanilan + miktar).replace('.', ',')
-                    stok_kaydet(stoklar)
-                    
-                    # Geri alma için kaydet
-                    son_kayit_geri_al = {
-                        'malzeme': malzeme,
-                        'eski_kalan': eski_kalan,
-                        'kullanilan': miktar,
-                        'birim': birim
-                    }
-                    
-                    # History'ye kaydet
-                    history_ekle("Kullanım", malzeme, miktar, birim)
-                    
-                    await message.reply(f"✅ {miktar:.1f} {birim} {malzeme} kullanıldı.\n📊 Kalan: {yeni_kalan:.1f} {birim}")
-                    return
-                else:
-                    await message.reply(f"❌ Yetersiz stok! Kalan: {kalan:.1f} {birim}")
-                    return
-            except:
-                await message.reply("❌ Miktar okunamadı")
-                return
-    await message.reply(f"❌ '{malzeme}' envanterde bulunamadı.")
+    eslesenler = malzeme_bul(malzeme_aranan, stoklar)
+    
+    if not eslesenler:
+        await message.reply(f"❌ '{malzeme_aranan}' ile eşleşen malzeme bulunamadı.")
+        return
+    
+    if len(eslesenler) > 1:
+        # Birden fazla eşleşme varsa kullanıcıya sor
+        liste = "\n".join([f"• {item.get('Malzeme / Alet')}" for item in eslesenler[:5]])
+        await message.reply(f"⚠️ '{malzeme_aranan}' için birden fazla malzeme bulundu:\n\n{liste}\n\nLütfen tam adını yazın.")
+        return
+    
+    item = eslesenler[0]
+    malzeme_adi = item.get('Malzeme / Alet')
+    
+    try:
+        kalan = float(str(item['Kalan Miktar']).replace(',', '.'))
+        if kalan >= miktar:
+            yeni_kalan = kalan - miktar
+            eski_kalan = kalan
+            item['Kalan Miktar'] = str(yeni_kalan).replace('.', ',')
+            kullanilan = float(str(item.get('Kullanılan', '0')).replace(',', '.'))
+            item['Kullanılan'] = str(kullanilan + miktar).replace('.', ',')
+            stok_kaydet(stoklar)
+            
+            son_kayit_geri_al = {
+                'malzeme': malzeme_adi,
+                'eski_kalan': eski_kalan,
+                'kullanilan': miktar,
+                'birim': birim
+            }
+            
+            history_ekle("Kullanım", malzeme_adi, miktar, birim)
+            
+            await message.reply(f"✅ {miktar:.1f} {birim} {malzeme_adi} kullanıldı.\n📊 Kalan: {yeni_kalan:.1f} {birim}")
+            return
+        else:
+            await message.reply(f"❌ Yetersiz stok! Kalan: {kalan:.1f} {birim}")
+            return
+    except:
+        await message.reply("❌ Miktar okunamadı")
+        return
 
 @dp.message_handler(commands=['kaydet_geri_al'])
 async def kaydet_geri_al(message: types.Message):
