@@ -83,6 +83,7 @@ async def start(message: types.Message):
                          "/sil Test - Malzeme sil (onay için /evet)\n"
                          "/ph 1 - Son pH ölçümü\n"
                          "/ph 1 hepsi - Tüm pH ölçümleri\n"
+                         "/ph_tumu - Tüm tenekelerin tüm pH kayıtları\n"
                          "/ph_ekle 1 6.5 - Yeni pH ekle\n"
                          "/ph_sil 1 - Son pH kaydını sil\n"
                          "/ph_sil 1 hepsi - Tüm pH kayıtlarını sil\n"
@@ -424,6 +425,49 @@ async def ph_sorgula(message: types.Message):
     except Exception as e:
         await message.reply(f"Hata: {e}")
 
+# ==================== TÜM TENEKELERİN TÜM pH ====================
+@dp.message_handler(commands=['ph_tumu'])
+async def ph_tumu(message: types.Message):
+    try:
+        with open('ph_records.csv', 'r', encoding='utf-8-sig') as f:
+            reader = csv.DictReader(f, delimiter=',')
+            tum_kayitlar = list(reader)
+        
+        if not tum_kayitlar:
+            await message.reply("❌ Hiç pH kaydı yok.")
+            return
+        
+        # Teneke numaralarına göre grupla
+        tenekeler = {}
+        for row in tum_kayitlar:
+            teneke = row.get('Teneke_No', 'Bilinmiyor')
+            if teneke not in tenekeler:
+                tenekeler[teneke] = []
+            tenekeler[teneke].append(row)
+        
+        cevap = "📊 **TÜM TENEKELER - TÜM pH ÖLÇÜMLERİ**\n\n"
+        
+        for teneke in sorted(tenekeler.keys(), key=lambda x: int(x) if x.isdigit() else 0):
+            cevap += f"🔹 **Teneke {teneke}**\n"
+            kayitlar = sorted(tenekeler[teneke], key=lambda x: x.get('Tarih', ''), reverse=True)
+            for k in kayitlar[:10]:
+                not_str = f" - {k.get('Not', '')}" if k.get('Not') else ""
+                bolge_str = f" ({k.get('Bolge', '-')})" if k.get('Bolge') and k.get('Bolge') != '-' else ""
+                cevap += f"   📅 {k['Tarih']}: pH {k['pH']}{bolge_str}{not_str}\n"
+            if len(kayitlar) > 10:
+                cevap += f"   *Toplam {len(kayitlar)} kayıt var*\n"
+            cevap += "\n"
+            
+            if len(cevap) > 3800:
+                await message.reply(cevap)
+                cevap = ""
+        
+        if cevap:
+            await message.reply(cevap)
+            
+    except Exception as e:
+        await message.reply(f"❌ Hata: {e}")
+
 # ==================== pH SİLME ====================
 @dp.message_handler(commands=['ph_sil'])
 async def ph_sil(message: types.Message):
@@ -448,7 +492,6 @@ async def ph_sil(message: types.Message):
         basliklar = satirlar[0]
         veriler = satirlar[1:]
         
-        # Tenekeye göre filtrele
         teneke_kayitlari = []
         for i, row in enumerate(veriler):
             if len(row) > 1 and row[1] == teneke_no:
@@ -459,7 +502,6 @@ async def ph_sil(message: types.Message):
             return
         
         if len(parcalar) > 1 and parcalar[1].lower() == 'hepsi':
-            # Tüm kayıtları sil (onaylı)
             silinecek_ph_kayitlari = teneke_kayitlari
             await message.reply(f"⚠️ **Teneke {teneke_no} için TÜM pH kayıtları** silinecek ({len(teneke_kayitlari)} kayıt).\n\nBu işlem GERİ DÖNÜŞÜMSÜZDÜR!\n\n30 saniye içinde `/ph_evet` yazın.")
             
@@ -471,7 +513,6 @@ async def ph_sil(message: types.Message):
             return
         
         if len(parcalar) > 1:
-            # Tarih ile sil
             tarih = parcalar[1]
             bulunan = None
             for i, row in teneke_kayitlari:
@@ -492,7 +533,6 @@ async def ph_sil(message: types.Message):
             await message.reply(f"✅ pH kaydı silindi:\n📅 {silinen[0]} - Teneke {silinen[1]} - pH {silinen[3]}")
             return
         
-        # Son kaydı sil
         son_kayit = teneke_kayitlari[-1]
         veriler.pop(son_kayit[0])
         
@@ -521,7 +561,6 @@ async def ph_evet(message: types.Message):
         basliklar = satirlar[0]
         veriler = satirlar[1:]
         
-        # Silinecek indeksleri bul (büyükten küçüğe sırala)
         indeksler = sorted([i for i, _ in silinecek_ph_kayitlari], reverse=True)
         for idx in indeksler:
             veriler.pop(idx)
