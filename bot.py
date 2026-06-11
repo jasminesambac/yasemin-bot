@@ -98,7 +98,7 @@ async def start(message: types.Message):
                          "/ph_sil 1 - Son pH kaydını sil\n"
                          "/gecmis - Son 10 işlem (ID ile)\n"
                          "/gecmis hepsi - Tüm geçmiş (ID ile)\n"
-                         "/gecmis 11-06-2026 - Tarihli işlemler\n"
+                         "/gecmis 14-05-2026 - Tarihli işlemler\n"
                          "/gecmis_sil 5 - ID ile işlem sil (onay için /gecmis_evet)\n"
                          "/test - Bot testi")
 
@@ -603,7 +603,6 @@ async def gecmis(message: types.Message):
         veriler = satirlar[1:]
         
         if not param:
-            # Son 10 kayıt (ID'li)
             sonlar = veriler[-10:][::-1]
             mesaj = "📜 **SON 10 İŞLEM (ID ile)**\n\n"
             for i, row in enumerate(sonlar, 1):
@@ -612,7 +611,6 @@ async def gecmis(message: types.Message):
             await message.reply(mesaj[:4000])
         
         elif param.lower() == 'hepsi':
-            # Tüm kayıtları ID'li göster (parçalı) - TARİHLER DÜZELTİLDİ
             for i in range(0, len(veriler), 10):
                 blok = veriler[i:i+10]
                 mesaj = "📜 **TÜM İŞLEMLER (ID ile)**\n\n"
@@ -622,10 +620,21 @@ async def gecmis(message: types.Message):
                 await message.reply(mesaj[:4000])
         
         else:
-            # Tarihe göre filtrele (GG-AA-YYYY formatında)
+            # Tarihe göre filtrele - HER İKİ FORMATI DA DENE
             tarih_kayitlari = [(i+1, row) for i, row in enumerate(veriler) if row[0] == param]
+            
+            if not tarih_kayitlari and '-' in param:
+                parcalar = param.split('-')
+                if len(parcalar) == 3:
+                    if len(parcalar[0]) == 4:  # YYYY-AA-GG ise
+                        ters_param = f"{parcalar[2]}-{parcalar[1]}-{parcalar[0]}"
+                        tarih_kayitlari = [(i+1, row) for i, row in enumerate(veriler) if row[0] == ters_param]
+                    else:  # GG-AA-YYYY ise
+                        ters_param = f"{parcalar[2]}-{parcalar[1]}-{parcalar[0]}"
+                        tarih_kayitlari = [(i+1, row) for i, row in enumerate(veriler) if row[0] == ters_param]
+            
             if not tarih_kayitlari:
-                await message.reply(f"❌ {param} tarihinde kayıt bulunamadı.\n\nTarih formatı: GG-AA-YYYY (örnek: 11-06-2026)")
+                await message.reply(f"❌ {param} tarihinde kayıt bulunamadı.\n\nDene: /gecmis 14-05-2026 veya /gecmis 2026-05-14")
                 return
             
             mesaj = f"📜 **{param} TARİHİNDEKİ İŞLEMLER (ID ile)**\n\n"
