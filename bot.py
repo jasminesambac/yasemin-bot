@@ -96,10 +96,10 @@ async def start(message: types.Message):
                          "/ph_tumu - Tüm tenekelerin tüm pH\n"
                          "/ph_ekle 1 6.5 - Yeni pH ekle\n"
                          "/ph_sil 1 - Son pH kaydını sil\n"
-                         "/gecmis - Son 10 işlem\n"
-                         "/gecmis hepsi - Tüm geçmiş\n"
+                         "/gecmis - Son 10 işlem (ID ile)\n"
+                         "/gecmis hepsi - Tüm geçmiş (ID ile)\n"
                          "/gecmis 11-06-2026 - Tarihli işlemler\n"
-                         "/gecmis_sil 1 - İşlem sil (onay için /gecmis_evet)\n"
+                         "/gecmis_sil 5 - ID ile işlem sil (onay için /gecmis_evet)\n"
                          "/test - Bot testi")
 
 @dp.message_handler(commands=['test'])
@@ -603,33 +603,35 @@ async def gecmis(message: types.Message):
         veriler = satirlar[1:]
         
         if not param:
-            # Son 10 kayıt
+            # Son 10 kayıt (ID'li)
             sonlar = veriler[-10:][::-1]
-            mesaj = "📜 **SON 10 İŞLEM**\n\n"
-            for row in sonlar:
-                mesaj += f"📅 {row[0]} - {row[1]}\n   {row[2]}\n\n"
+            mesaj = "📜 **SON 10 İŞLEM (ID ile)**\n\n"
+            for i, row in enumerate(sonlar, 1):
+                kayit_id = len(veriler) - i + 1
+                mesaj += f"**ID: {kayit_id}** | 📅 {row[0]} - {row[1]}\n   {row[2][:100]}\n\n"
             await message.reply(mesaj[:4000])
         
         elif param.lower() == 'hepsi':
-            # Tüm kayıtları parçala
+            # Tüm kayıtları ID'li göster (parçalı)
             for i in range(0, len(veriler), 10):
                 blok = veriler[i:i+10]
-                mesaj = "📜 **TÜM İŞLEMLER**\n\n"
-                for row in blok:
-                    mesaj += f"📅 {row[0]} - {row[1]}\n   {row[2][:200]}\n\n"
+                mesaj = "📜 **TÜM İŞLEMLER (ID ile)**\n\n"
+                for j, row in enumerate(blok):
+                    kayit_id = i + j + 1
+                    mesaj += f"**ID: {kayit_id}** | 📅 {row[0]} - {row[1]}\n   {row[2][:100]}\n\n"
                 for parca in mesaj_parcala(mesaj):
                     await message.reply(parca)
         
         else:
-            # Tarihe göre filtrele (örn: 11-06-2026)
-            tarih_kayitlari = [row for row in veriler if row[0] == param]
+            # Tarihe göre filtrele (ID'li)
+            tarih_kayitlari = [(i+1, row) for i, row in enumerate(veriler) if row[0] == param]
             if not tarih_kayitlari:
                 await message.reply(f"❌ {param} tarihinde kayıt bulunamadı.")
                 return
             
-            mesaj = f"📜 **{param} TARİHİNDEKİ İŞLEMLER**\n\n"
-            for row in tarih_kayitlari:
-                mesaj += f"📅 {row[0]} - {row[1]}\n   {row[2]}\n\n"
+            mesaj = f"📜 **{param} TARİHİNDEKİ İŞLEMLER (ID ile)**\n\n"
+            for kayit_id, row in tarih_kayitlari[:20]:
+                mesaj += f"**ID: {kayit_id}** | 📅 {row[0]} - {row[1]}\n   {row[2][:100]}\n\n"
             await message.reply(mesaj[:4000])
             
     except Exception as e:
@@ -641,7 +643,7 @@ async def gecmis_sil(message: types.Message):
     global silinecek_gecmis_id, silinecek_gecmis_hepsi
     param = message.get_args()
     if not param:
-        await message.reply("Örnek:\n/gecmis_sil 1 - ID ile sil\n/gecmis_sil hepsi - Tüm geçmişi sil")
+        await message.reply("Örnek:\n/gecmis_sil 5 - ID ile sil (ID'yi /gecmis ile görebilirsin)\n/gecmis_sil hepsi - Tüm geçmişi sil")
         return
     
     try:
@@ -668,13 +670,14 @@ async def gecmis_sil(message: types.Message):
             return
         
         try:
-            idx = int(param) - 1
-            if idx < 0 or idx >= len(veriler):
-                await message.reply("❌ Geçersiz ID.")
+            kayit_id = int(param)
+            if kayit_id < 1 or kayit_id > len(veriler):
+                await message.reply(f"❌ Geçersiz ID. 1 ile {len(veriler)} arasında bir sayı girin.")
                 return
             
+            idx = kayit_id - 1
             silinecek_gecmis_id = (idx, veriler[idx])
-            await message.reply(f"⚠️ **ID: {param}** kaydı silinecek:\n\n📅 {veriler[idx][0]} - {veriler[idx][1]}\n   {veriler[idx][2]}\n\nBu işlem GERİ DÖNÜŞÜMSÜZDÜR!\n\n30 saniye içinde `/gecmis_evet` yazın.")
+            await message.reply(f"⚠️ **ID: {kayit_id}** kaydı silinecek:\n\n📅 {veriler[idx][0]} - {veriler[idx][1]}\n   {veriler[idx][2][:200]}\n\nBu işlem GERİ DÖNÜŞÜMSÜZDÜR!\n\n30 saniye içinde `/gecmis_evet` yazın.")
             
             import asyncio
             await asyncio.sleep(30)
@@ -682,8 +685,8 @@ async def gecmis_sil(message: types.Message):
                 silinecek_gecmis_id = None
                 await message.reply("⏰ Silme iptal edildi.")
             return
-        except:
-            await message.reply("❌ ID sayı olmalı. Örnek: /gecmis_sil 1")
+        except ValueError:
+            await message.reply("❌ ID sayı olmalı. Örnek: /gecmis_sil 5")
             
     except Exception as e:
         await message.reply(f"❌ Hata: {e}")
@@ -714,7 +717,7 @@ async def gecmis_evet(message: types.Message):
                 writer = csv.writer(f)
                 writer.writerow(basliklar)
                 writer.writerows(veriler)
-            await message.reply(f"✅ Kayıt silindi:\n📅 {silinen[0]} - {silinen[1]}\n   {silinen[2]}")
+            await message.reply(f"✅ Kayıt silindi:\n📅 {silinen[0]} - {silinen[1]}\n   {silinen[2][:200]}")
             silinecek_gecmis_id = None
             return
         
