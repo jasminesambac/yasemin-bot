@@ -35,7 +35,8 @@ def stok_kaydet(stok_listesi):
     try:
         with open('inventory.csv', 'w', encoding='utf-8-sig', newline='') as f:
             if stok_listesi:
-                fieldnames = stok_listesi[0].keys()
+                # Sabit fieldnames kullan (tutarlılık için)
+                fieldnames = ['Kategori', 'Malzeme / Alet', 'Başlangıç Miktarı', 'Kullanılan', 'Kalan Miktar', 'Birim', 'Görevi / Not']
                 writer = csv.DictWriter(f, fieldnames=fieldnames, delimiter=';')
                 writer.writeheader()
                 writer.writerows(stok_listesi)
@@ -70,7 +71,7 @@ async def start(message: types.Message):
                          "/stok lena - Malzeme sorgula\n"
                          "/kaydet 5 gr NPK - Stoktan düş\n"
                          "/kaydet_geri_al - Son işlemi geri al\n"
-                         "/ekle NPK;1000;gr;Gübre - Yeni malzeme ekle\n"
+                         "/ekle NPK 20-20-20;1000;gr;Gübre - Yeni malzeme ekle\n"
                          "/test - Bot testi")
 
 @dp.message_handler(commands=['test'])
@@ -243,9 +244,17 @@ async def ekle_envanter(message: types.Message):
             await message.reply(f"❌ '{malzeme_adi}' zaten envanterde var. Silmek için /sil, güncellemek için manuel düzenleme yapın.")
             return
     
+    # Kategori otomatik belirleme (sıvı mı katı mı)
+    if birim.lower() in ['ml', 'l', 'litre']:
+        kategori = 'Sıvı'
+    elif birim.lower() in ['adet']:
+        kategori = 'Alet'
+    else:
+        kategori = 'Katı'
+    
     # Yeni malzeme ekle
     yeni_kayit = {
-        'Kategori': 'Katı',
+        'Kategori': kategori,
         'Malzeme / Alet': malzeme_adi,
         'Başlangıç Miktarı': miktar,
         'Kullanılan': '0',
@@ -261,6 +270,13 @@ async def ekle_envanter(message: types.Message):
         
         # History'ye ekleme işlemini kaydet
         history_ekle("ENVANTERE EKLENDİ", malzeme_adi, miktar, birim)
+        
+        # Doğrulama için tekrar oku
+        kontrol = stok_oku()
+        for item in kontrol:
+            if item.get('Malzeme / Alet') == malzeme_adi:
+                await message.reply(f"✅ Doğrulama: {malzeme_adi} envanterde görünüyor. Miktar: {item.get('Kalan Miktar')} {item.get('Birim')}")
+                return
     else:
         await message.reply("❌ Ekleme sırasında hata oluştu.")
 
