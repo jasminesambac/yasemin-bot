@@ -6,6 +6,7 @@ from aiogram import Bot, Dispatcher, executor, types
 
 API_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
+# Geçici hafızalar
 son_kayit_geri_al = None
 silinecek_malzeme = None
 
@@ -20,32 +21,20 @@ def stok_oku():
     stok_listesi = []
     try:
         with open('inventory.csv', 'r', encoding='utf-8-sig') as f:
-            # Dosyanın tamamını oku
             icerik = f.read()
-            print(f"DEBUG - Dosya içeriği uzunluğu: {len(icerik)} karakter")
-            
-            # Satırları ayır
             satirlar = icerik.strip().split('\n')
             if not satirlar:
                 return []
-            
-            # Başlıkları al
             basliklar = satirlar[0].split(';')
-            print(f"DEBUG - Başlıklar: {basliklar}")
-            
-            # Her satır için
             for satir in satirlar[1:]:
                 if satir.strip():
                     degerler = satir.split(';')
-                    # Eksik sütunları boşlukla doldur
                     while len(degerler) < len(basliklar):
                         degerler.append('')
                     satir_sozluk = {}
                     for i, baslik in enumerate(basliklar):
                         satir_sozluk[baslik] = degerler[i].strip()
                     stok_listesi.append(satir_sozluk)
-            
-            print(f"DEBUG - Toplam {len(stok_listesi)} malzeme okundu")
     except Exception as e:
         print(f"Stok okuma hatası: {e}")
     return stok_listesi
@@ -58,7 +47,6 @@ def stok_kaydet(stok_listesi):
                 writer = csv.DictWriter(f, fieldnames=fieldnames, delimiter=';')
                 writer.writeheader()
                 writer.writerows(stok_listesi)
-        print(f"DEBUG - {len(stok_listesi)} malzeme kaydedildi")
         return True
     except Exception as e:
         print(f"Stok kayıt hatası: {e}")
@@ -90,7 +78,8 @@ async def start(message: types.Message):
                          "/stok lena - Malzeme sorgula\n"
                          "/kaydet 5 gr NPK - Stoktan düş\n"
                          "/kaydet_geri_al - Son işlemi geri al\n"
-                         "/ekle NPK 20-20-20;1000;gr;Gübre - Yeni malzeme ekle\n"
+                         "/ekle NPK;1000;gr;Gübre - Yeni malzeme ekle\n"
+                         "/sil Test - Malzeme sil (onay için /evet)\n"
                          "/test - Bot testi")
 
 @dp.message_handler(commands=['test'])
@@ -189,7 +178,6 @@ async def kaydet(message: types.Message):
     try:
         kalan_str = str(item['Kalan Miktar']).replace(',', '.').strip()
         if kalan_str == 'Stok bol':
-            # Sonsuz stok için kontrol yapma
             yeni_kalan = 'Stok bol'
             eski_kalan = 'Stok bol'
             item['Kalan Miktar'] = yeni_kalan
@@ -263,8 +251,7 @@ async def kaydet_geri_al(message: types.Message):
 async def ekle_envanter(message: types.Message):
     param = message.get_args()
     if not param:
-        await message.reply("Örnek: /ekle NPK 20-20-20;1000;gr;Dengeli gübre\n\n"
-                           "Format: Ad;Miktar;Birim;Görevi")
+        await message.reply("Örnek: /ekle NPK;1000;gr;Gübre\n\nFormat: Ad;Miktar;Birim;Görevi")
         return
     
     parcalar = param.split(';')
@@ -279,13 +266,11 @@ async def ekle_envanter(message: types.Message):
     
     stoklar = stok_oku()
     
-    # Aynı malzeme var mı kontrol et
     for item in stoklar:
         if item.get('Malzeme / Alet', '').lower() == malzeme_adi.lower():
             await message.reply(f"❌ '{malzeme_adi}' zaten envanterde var.")
             return
     
-    # Kategori belirleme
     if birim.lower() in ['ml', 'l', 'litre']:
         kategori = 'Sıvı'
     elif birim.lower() in ['adet']:
@@ -308,15 +293,57 @@ async def ekle_envanter(message: types.Message):
     if stok_kaydet(stoklar):
         await message.reply(f"✅ **'{malzeme_adi}'** envantere eklendi!\n\n📦 Miktar: {miktar} {birim}\n📝 Görevi: {gorev}")
         history_ekle("ENVANTERE EKLENDİ", malzeme_adi, miktar, birim)
-        
-        # Doğrulama
-        kontrol = stok_oku()
-        for item in kontrol:
-            if item.get('Malzeme / Alet') == malzeme_adi:
-                await message.reply(f"✅ Doğrulama: {malzeme_adi} envanterde. Miktar: {item.get('Kalan Miktar')} {item.get('Birim')}")
-                return
     else:
         await message.reply("❌ Ekleme sırasında hata oluştu.")
+
+# ==================== SİLME KOMUTLARI ====================
+@dp.message_handler(commands=['sil'])
+async def sil_stok(message: types.Message):
+    global silinecek_malzeme
+    param = message.get_args()
+    if not param:
+        await message.reply("Örnek: /sil Test")
+        return
+    
+    stoklar = stok_oku()
+    eslesenler = malzeme_bul(param, stoklar)
+    
+    if not eslesenler:
+        await message.reply(f"❌ '{param}' ile eşleşen malzeme bulunamadı.")
+        return
+    
+    if len(eslesenler) > 1:
+        liste = "\n".join([f"• {item.get('Malzeme / Alet')}" for item in eslesenler[:5]])
+        await message.reply(f"⚠️ '{param}' için birden fazla malzeme bulundu:\n\n{liste}\n\nLütfen tam adını yazın.")
+        return
+    
+    silinecek_malzeme = eslesenler[0]
+    await message.reply(f"⚠️ **{silinecek_malzeme.get('Malzeme / Alet')}** silinsin mi?\n\n"
+                       f"📊 Miktar: {silinecek_malzeme.get('Kalan Miktar')} {silinecek_malzeme.get('Birim')}\n\n"
+                       f"Bu işlem GERİ DÖNÜŞÜMSÜZDÜR!\n\n"
+                       f"30 saniye içinde `/evet` yazın.")
+
+@dp.message_handler(commands=['evet'])
+async def evet_sil(message: types.Message):
+    global silinecek_malzeme
+    if not silinecek_malzeme:
+        await message.reply("❌ Silinecek malzeme yok. Önce /sil komutunu kullanın.")
+        return
+    
+    stoklar = stok_oku()
+    malzeme_adi = silinecek_malzeme.get('Malzeme / Alet')
+    miktar = silinecek_malzeme.get('Kalan Miktar')
+    birim = silinecek_malzeme.get('Birim')
+    
+    yeni_stoklar = [item for item in stoklar if item.get('Malzeme / Alet') != malzeme_adi]
+    
+    if stok_kaydet(yeni_stoklar):
+        await message.reply(f"✅ **'{malzeme_adi}'** envanterden silindi.\n\n📊 Miktar: {miktar} {birim}")
+        history_ekle("ENVANTERDEN SİLİNDİ", malzeme_adi, miktar, birim)
+    else:
+        await message.reply("❌ Silme işlemi sırasında hata oluştu.")
+    
+    silinecek_malzeme = None
 
 if __name__ == '__main__':
     executor.start_polling(dp, skip_updates=True)
