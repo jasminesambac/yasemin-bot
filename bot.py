@@ -9,6 +9,7 @@ API_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 # Geçici hafızalar
 son_kayit_geri_al = None
 silinecek_malzeme = None
+silinecek_ph_kayitlari = None
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=API_TOKEN)
@@ -81,8 +82,11 @@ async def start(message: types.Message):
                          "/ekle NPK;1000;gr;Gübre - Yeni malzeme ekle\n"
                          "/sil Test - Malzeme sil (onay için /evet)\n"
                          "/ph 1 - Son pH ölçümü\n"
-                         "/ph 1 hepsi - Tüm pH ölçümleri (çamur testleri dahil)\n"
+                         "/ph 1 hepsi - Tüm pH ölçümleri\n"
                          "/ph_ekle 1 6.5 - Yeni pH ekle\n"
+                         "/ph_sil 1 - Son pH kaydını sil\n"
+                         "/ph_sil 1 hepsi - Tüm pH kayıtlarını sil\n"
+                         "/ph_sil 1 19-05-2026 - Tarihli kaydı sil\n"
                          "/test - Bot testi")
 
 @dp.message_handler(commands=['test'])
@@ -351,7 +355,7 @@ async def evet_sil(message: types.Message):
     
     silinecek_malzeme = None
 
-# ==================== pH ====================
+# ==================== pH EKLE ====================
 @dp.message_handler(commands=['ph_ekle'])
 async def ph_ekle(message: types.Message):
     param = message.get_args()
@@ -376,11 +380,12 @@ async def ph_ekle(message: types.Message):
     except Exception as e:
         await message.reply(f"❌ Hata: {e}")
 
+# ==================== pH SORGULA ====================
 @dp.message_handler(commands=['ph'])
 async def ph_sorgula(message: types.Message):
     param = message.get_args()
     if not param:
-        await message.reply("Örnek: /ph 1 - Son ölçüm\n/ph 1 hepsi - Tüm ölçümler (çamur testleri dahil)")
+        await message.reply("Örnek: /ph 1 - Son ölçüm\n/ph 1 hepsi - Tüm ölçümler")
         return
     
     parcalar = param.split()
@@ -419,11 +424,10 @@ async def ph_sorgula(message: types.Message):
     except Exception as e:
         await message.reply(f"Hata: {e}")
 
-if __name__ == '__main__':
-    executor.start_polling(dp, skip_updates=True)
-    # ==================== pH SİLME ====================
+# ==================== pH SİLME ====================
 @dp.message_handler(commands=['ph_sil'])
 async def ph_sil(message: types.Message):
+    global silinecek_ph_kayitlari
     param = message.get_args()
     if not param:
         await message.reply("Örnek:\n/ph_sil 1 - Son kaydı sil\n/ph_sil 1 hepsi - Tüm kayıtları sil\n/ph_sil 1 19-05-2026 - Tarihli kaydı sil")
@@ -456,13 +460,12 @@ async def ph_sil(message: types.Message):
         
         if len(parcalar) > 1 and parcalar[1].lower() == 'hepsi':
             # Tüm kayıtları sil (onaylı)
-            global silinecek_ph_kayitlari
             silinecek_ph_kayitlari = teneke_kayitlari
             await message.reply(f"⚠️ **Teneke {teneke_no} için TÜM pH kayıtları** silinecek ({len(teneke_kayitlari)} kayıt).\n\nBu işlem GERİ DÖNÜŞÜMSÜZDÜR!\n\n30 saniye içinde `/ph_evet` yazın.")
             
             import asyncio
             await asyncio.sleep(30)
-            if 'silinecek_ph_kayitlari' in globals() and silinecek_ph_kayitlari == teneke_kayitlari:
+            if silinecek_ph_kayitlari == teneke_kayitlari:
                 silinecek_ph_kayitlari = None
                 await message.reply("⏰ Silme iptal edildi.")
             return
@@ -533,3 +536,6 @@ async def ph_evet(message: types.Message):
     except Exception as e:
         await message.reply(f"❌ Hata: {e}")
         silinecek_ph_kayitlari = None
+
+if __name__ == '__main__':
+    executor.start_polling(dp, skip_updates=True)
