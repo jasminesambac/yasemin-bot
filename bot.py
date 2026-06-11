@@ -421,3 +421,115 @@ async def ph_sorgula(message: types.Message):
 
 if __name__ == '__main__':
     executor.start_polling(dp, skip_updates=True)
+    # ==================== pH SİLME ====================
+@dp.message_handler(commands=['ph_sil'])
+async def ph_sil(message: types.Message):
+    param = message.get_args()
+    if not param:
+        await message.reply("Örnek:\n/ph_sil 1 - Son kaydı sil\n/ph_sil 1 hepsi - Tüm kayıtları sil\n/ph_sil 1 19-05-2026 - Tarihli kaydı sil")
+        return
+    
+    parcalar = param.split()
+    teneke_no = parcalar[0]
+    
+    try:
+        with open('ph_records.csv', 'r', encoding='utf-8-sig') as f:
+            reader = csv.reader(f)
+            satirlar = list(reader)
+        
+        if len(satirlar) <= 1:
+            await message.reply("❌ Silinecek kayıt yok.")
+            return
+        
+        basliklar = satirlar[0]
+        veriler = satirlar[1:]
+        
+        # Tenekeye göre filtrele
+        teneke_kayitlari = []
+        for i, row in enumerate(veriler):
+            if len(row) > 1 and row[1] == teneke_no:
+                teneke_kayitlari.append((i, row))
+        
+        if not teneke_kayitlari:
+            await message.reply(f"❌ Teneke {teneke_no} için pH kaydı bulunamadı.")
+            return
+        
+        if len(parcalar) > 1 and parcalar[1].lower() == 'hepsi':
+            # Tüm kayıtları sil (onaylı)
+            global silinecek_ph_kayitlari
+            silinecek_ph_kayitlari = teneke_kayitlari
+            await message.reply(f"⚠️ **Teneke {teneke_no} için TÜM pH kayıtları** silinecek ({len(teneke_kayitlari)} kayıt).\n\nBu işlem GERİ DÖNÜŞÜMSÜZDÜR!\n\n30 saniye içinde `/ph_evet` yazın.")
+            
+            import asyncio
+            await asyncio.sleep(30)
+            if 'silinecek_ph_kayitlari' in globals() and silinecek_ph_kayitlari == teneke_kayitlari:
+                silinecek_ph_kayitlari = None
+                await message.reply("⏰ Silme iptal edildi.")
+            return
+        
+        if len(parcalar) > 1:
+            # Tarih ile sil
+            tarih = parcalar[1]
+            bulunan = None
+            for i, row in teneke_kayitlari:
+                if len(row) > 0 and row[0] == tarih:
+                    bulunan = (i, row)
+                    break
+            
+            if not bulunan:
+                await message.reply(f"❌ Teneke {teneke_no} için {tarih} tarihinde kayıt bulunamadı.")
+                return
+            
+            silinen = veriler.pop(bulunan[0])
+            with open('ph_records.csv', 'w', encoding='utf-8-sig', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow(basliklar)
+                writer.writerows(veriler)
+            
+            await message.reply(f"✅ pH kaydı silindi:\n📅 {silinen[0]} - Teneke {silinen[1]} - pH {silinen[3]}")
+            return
+        
+        # Son kaydı sil
+        son_kayit = teneke_kayitlari[-1]
+        veriler.pop(son_kayit[0])
+        
+        with open('ph_records.csv', 'w', encoding='utf-8-sig', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(basliklar)
+            writer.writerows(veriler)
+        
+        await message.reply(f"✅ Son pH kaydı silindi:\n📅 {son_kayit[1][0]} - Teneke {son_kayit[1][1]} - pH {son_kayit[1][3]}")
+        
+    except Exception as e:
+        await message.reply(f"❌ Hata: {e}")
+
+@dp.message_handler(commands=['ph_evet'])
+async def ph_evet(message: types.Message):
+    global silinecek_ph_kayitlari
+    if not silinecek_ph_kayitlari:
+        await message.reply("❌ Silinecek kayıt yok. Önce /ph_sil komutunu kullanın.")
+        return
+    
+    try:
+        with open('ph_records.csv', 'r', encoding='utf-8-sig') as f:
+            reader = csv.reader(f)
+            satirlar = list(reader)
+        
+        basliklar = satirlar[0]
+        veriler = satirlar[1:]
+        
+        # Silinecek indeksleri bul (büyükten küçüğe sırala)
+        indeksler = sorted([i for i, _ in silinecek_ph_kayitlari], reverse=True)
+        for idx in indeksler:
+            veriler.pop(idx)
+        
+        with open('ph_records.csv', 'w', encoding='utf-8-sig', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(basliklar)
+            writer.writerows(veriler)
+        
+        await message.reply(f"✅ Teneke {silinecek_ph_kayitlari[0][1][1]} için TÜM pH kayıtları silindi.")
+        silinecek_ph_kayitlari = None
+    except Exception as e:
+        await message.reply(f"❌ Hata: {e}")
+        silinecek_ph_kayitlari = None
