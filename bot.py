@@ -6,8 +6,9 @@ from aiogram import Bot, Dispatcher, executor, types
 
 API_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
-# Geçici hafıza (son kaydı geri almak için)
+# Geçici hafızalar
 son_kayit_geri_al = None
+silinecek_malzeme = None
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=API_TOKEN)
@@ -54,7 +55,6 @@ def history_ekle(islem, malzeme_adi, miktar, birim):
         return False
 
 def malzeme_bul(aranan, stoklar):
-    """Kısmi eşleme ile malzeme bulur (örn: 'humik' -> 'Hümik Asit')"""
     aranan = aranan.lower()
     eslesenler = []
     for item in stoklar:
@@ -65,16 +65,17 @@ def malzeme_bul(aranan, stoklar):
 
 @dp.message_handler(commands=['start'])
 async def start(message: types.Message):
-    await message.answer("🌿 Bot çalışıyor!\n\n"
+    await message.answer("🌿 **Yasemin Asistan** hazır!\n\n"
                          "/stok - Envanter listesi\n"
-                         "/stok humik - Malzeme sorgula (kısmi eşleme)\n"
-                         "/kaydet 5 gr NPK - Stoktan düş ve kaydet\n"
+                         "/stok lena - Malzeme sorgula\n"
+                         "/kaydet 5 gr NPK - Stoktan düş\n"
                          "/kaydet_geri_al - Son işlemi geri al\n"
+                         "/ekle NPK;1000;gr;Gübre - Yeni malzeme ekle\n"
                          "/test - Bot testi")
 
 @dp.message_handler(commands=['test'])
 async def test(message: types.Message):
-    await message.answer("✅ Test başarılı! Bot çalışıyor.")
+    await message.answer("✅ Bot çalışıyor!")
 
 @dp.message_handler(commands=['stok'])
 async def stok(message: types.Message):
@@ -92,14 +93,12 @@ async def stok(message: types.Message):
             await message.reply(f"❌ '{param}' ile eşleşen malzeme bulunamadı.")
             return
         
-        # Eğer tek bir malzeme eşleştiyse detaylı göster
         if len(eslesenler) == 1:
             item = eslesenler[0]
             cevap = f"📦 **{item.get('Malzeme / Alet')}**\n"
             cevap += f"📊 Kalan: {item.get('Kalan Miktar')} {item.get('Birim')}\n"
             cevap += f"📝 Görevi: {item.get('Görevi / Not', '-')}\n\n"
             
-            # History'den geçmiş kullanımları bul
             try:
                 with open('history.csv', 'r', encoding='utf-8-sig') as f:
                     reader = csv.reader(f)
@@ -114,21 +113,16 @@ async def stok(message: types.Message):
                     cevap += "📜 **TÜM KULLANIMLAR:**\n"
                     for row in kayitlar:
                         cevap += f"   • {row[0]}: {row[2]}\n"
-                    if len(kayitlar) > 20:
-                        cevap += f"\n*Toplam {len(kayitlar)} kayıt var.*"
                 else:
                     cevap += "📜 **Geçmiş kullanım kaydı yok.**"
             except:
-                cevap += "📜 History dosyası okunamadı."
+                cevap += "📜 History okunamadı."
             
             await message.reply(cevap)
         else:
-            # Birden fazla malzeme eşleşti, liste olarak göster
             cevap = f"🔍 **'{param}' için bulunan malzemeler:**\n\n"
             for item in eslesenler[:10]:
                 cevap += f"• {item.get('Malzeme / Alet')}: {item.get('Kalan Miktar')} {item.get('Birim')}\n"
-            if len(eslesenler) > 10:
-                cevap += f"\n*Toplam {len(eslesenler)} malzeme var. Daha detaylı arama yapın.*"
             await message.reply(cevap)
     else:
         mesaj = "📦 **ENVANTER LİSTESİ**\n\n"
@@ -165,7 +159,6 @@ async def kaydet(message: types.Message):
         return
     
     if len(eslesenler) > 1:
-        # Birden fazla eşleşme varsa kullanıcıya sor
         liste = "\n".join([f"• {item.get('Malzeme / Alet')}" for item in eslesenler[:5]])
         await message.reply(f"⚠️ '{malzeme_aranan}' için birden fazla malzeme bulundu:\n\n{liste}\n\nLütfen tam adını yazın.")
         return
@@ -223,6 +216,53 @@ async def kaydet_geri_al(message: types.Message):
             await message.reply(f"✅ Geri alındı: {malzeme} +{miktar:.1f} {birim}")
             return
     await message.reply("❌ Malzeme bulunamadı")
+
+@dp.message_handler(commands=['ekle'])
+async def ekle_envanter(message: types.Message):
+    param = message.get_args()
+    if not param:
+        await message.reply("Örnek: /ekle NPK 20-20-20;1000;gr;Dengeli gübre\n\n"
+                           "Format: Ad;Miktar;Birim;Görevi")
+        return
+    
+    parcalar = param.split(';')
+    if len(parcalar) < 3:
+        await message.reply("Format: Ad;Miktar;Birim;Görev\nÖrnek: YeniGubre;500;gr;Deneme")
+        return
+    
+    malzeme_adi = parcalar[0].strip()
+    miktar = parcalar[1].strip()
+    birim = parcalar[2].strip()
+    gorev = parcalar[3].strip() if len(parcalar) > 3 else "-"
+    
+    stoklar = stok_oku()
+    
+    # Aynı malzeme var mı kontrol et
+    for item in stoklar:
+        if item.get('Malzeme / Alet', '').lower() == malzeme_adi.lower():
+            await message.reply(f"❌ '{malzeme_adi}' zaten envanterde var. Silmek için /sil, güncellemek için manuel düzenleme yapın.")
+            return
+    
+    # Yeni malzeme ekle
+    yeni_kayit = {
+        'Kategori': 'Katı',
+        'Malzeme / Alet': malzeme_adi,
+        'Başlangıç Miktarı': miktar,
+        'Kullanılan': '0',
+        'Kalan Miktar': miktar,
+        'Birim': birim,
+        'Görevi / Not': gorev
+    }
+    
+    stoklar.append(yeni_kayit)
+    
+    if stok_kaydet(stoklar):
+        await message.reply(f"✅ **'{malzeme_adi}'** envantere eklendi!\n\n📦 Miktar: {miktar} {birim}\n📝 Görevi: {gorev}")
+        
+        # History'ye ekleme işlemini kaydet
+        history_ekle("ENVANTERE EKLENDİ", malzeme_adi, miktar, birim)
+    else:
+        await message.reply("❌ Ekleme sırasında hata oluştu.")
 
 if __name__ == '__main__':
     executor.start_polling(dp, skip_updates=True)
