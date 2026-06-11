@@ -13,7 +13,6 @@ def stok_oku():
     stok_listesi = []
     try:
         with open('inventory.csv', 'r', encoding='utf-8-sig') as f:
-            # delimiter tespiti
             ilk_satir = f.readline()
             f.seek(0)
             delimiter = ';' if ';' in ilk_satir else ','
@@ -42,15 +41,44 @@ async def stok(message: types.Message):
         return
     
     if param:
+        # Malzemeyi bul
+        malzeme_bulundu = None
         for item in stoklar:
             if param.lower() in item.get('Malzeme / Alet', '').lower():
-                await message.reply(
-                    f"📦 **{item.get('Malzeme / Alet')}**\n"
-                    f"📊 Kalan: {item.get('Kalan Miktar')} {item.get('Birim')}\n"
-                    f"📝 Görevi: {item.get('Görevi / Not', '-')}"
-                )
-                return
-        await message.reply(f"❌ '{param}' envanterde bulunamadı.")
+                malzeme_bulundu = item
+                break
+        
+        if not malzeme_bulundu:
+            await message.reply(f"❌ '{param}' envanterde bulunamadı.")
+            return
+        
+        # Stok bilgisi
+        cevap = f"📦 **{malzeme_bulundu.get('Malzeme / Alet')}**\n"
+        cevap += f"📊 Kalan: {malzeme_bulundu.get('Kalan Miktar')} {malzeme_bulundu.get('Birim')}\n"
+        cevap += f"📝 Görevi: {malzeme_bulundu.get('Görevi / Not', '-')}\n\n"
+        
+        # History'den geçmiş kullanımları bul
+        try:
+            with open('history.csv', 'r', encoding='utf-8-sig') as f:
+                reader = csv.reader(f)
+                satirlar = list(reader)
+            
+            kayitlar = []
+            for row in satirlar[1:]:
+                if len(row) >= 3 and param.lower() in row[2].lower():
+                    kayitlar.append(row)
+            
+            if kayitlar:
+                cevap += "📜 **SON KULLANIMLAR:**\n"
+                for row in kayitlar[-5:][::-1]:
+                    cevap += f"   • {row[0]}: {row[2]}\n"
+            else:
+                cevap += "📜 **Geçmiş kullanım kaydı yok.**"
+            
+        except Exception as e:
+            cevap += f"📜 History okunamadı: {e}"
+        
+        await message.reply(cevap)
     else:
         mesaj = "📦 **ENVANTER LİSTESİ**\n\n"
         for item in stoklar[:25]:
