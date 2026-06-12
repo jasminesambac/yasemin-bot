@@ -527,16 +527,15 @@ async def evet_sil(message: types.Message):
         await message.reply("❌ Silinecek malzeme yok. Önce /sil komutunu kullanın.")
         return
     
-    stoklar = stok_oku()
     malzeme_adi = silinecek_malzeme.get('Malzeme / Alet')
-    miktar = silinecek_malzeme.get('Kalan Miktar')
-    birim = silinecek_malzeme.get('Birim')
+    stoklar = stok_oku()
     
+    # Sadece o malzemeyi sil
     yeni_stoklar = [item for item in stoklar if item.get('Malzeme / Alet') != malzeme_adi]
     
     if stok_kaydet(yeni_stoklar):
-        await message.reply(f"✅ **'{malzeme_adi}'** envanterden silindi.\n\n📊 Miktar: {miktar} {birim}")
-        history_ekle("ENVANTERDEN SİLİNDİ", malzeme_adi, miktar, birim)
+        await message.reply(f"✅ **'{malzeme_adi}'** envanterden silindi.")
+        history_ekle("ENVANTERDEN SİLİNDİ", malzeme_adi, "-", "-")
     else:
         await message.reply("❌ Silme işlemi sırasında hata oluştu.")
     
@@ -662,9 +661,8 @@ async def ph_sil(message: types.Message):
             await message.reply("❌ Silinecek kayıt yok.")
             return
         
-        # Tenekeye göre filtrele ve indeksleri bul (1-based çünkü başlık satırı var)
         teneke_kayitlari = []
-        for idx, row in enumerate(kayitlar, start=2):  # 2. satırdan başlıyor çünkü 1. satır başlık
+        for idx, row in enumerate(kayitlar, start=2):
             if str(row.get('Teneke_No', '')).strip() == teneke_no:
                 teneke_kayitlari.append((idx, row))
         
@@ -697,7 +695,6 @@ async def ph_sil(message: types.Message):
             await message.reply(f"✅ pH kaydı silindi:\n📅 {bulunan[1]['Tarih']} - Teneke {teneke_no} - pH {bulunan[1]['pH']}")
             return
         
-        # Son kaydı sil
         son_idx, son_row = teneke_kayitlari[-1]
         ph_sheet.delete_rows(son_idx)
         await message.reply(f"✅ Son pH kaydı silindi:\n📅 {son_row['Tarih']} - Teneke {teneke_no} - pH {son_row['pH']}")
@@ -823,9 +820,7 @@ async def gecmis_evet(message: types.Message):
     global silinecek_gecmis_id, silinecek_gecmis_hepsi
     try:
         if silinecek_gecmis_hepsi:
-            # Tüm satırları temizle (başlık satırını koru)
             history_sheet.clear()
-            # Başlıkları yeniden ekle
             headers = ['Tarih', 'Islem', 'Kullanilan_Malzeme_Miktar', 'pH', 'Not']
             history_sheet.append_row(headers)
             await message.reply("✅ Tüm geçmiş kayıtları silindi.")
@@ -834,7 +829,6 @@ async def gecmis_evet(message: types.Message):
         
         if silinecek_gecmis_id:
             idx, silinen = silinecek_gecmis_id
-            # Google Sheets'te satır silme (2. satır = ilk veri, çünkü 1. satır başlık)
             history_sheet.delete_rows(idx + 2)
             await message.reply(f"✅ Kayıt silindi:\n📅 {silinen.get('Tarih', '-')} - {silinen.get('Islem', '-')}\n📝 {silinen.get('Kullanilan_Malzeme_Miktar', '-')[:200]}")
             silinecek_gecmis_id = None
@@ -1050,7 +1044,6 @@ async def hatirlat_sil(message: types.Message):
             await message.reply("❌ Geçersiz ID.")
             return
         
-        # Google Sheets'te satır sil (2. satır, çünkü başlık 1. satırda)
         reminders_sheet.delete_rows(idx + 2)
         await message.reply(f"✅ Hatırlatma silindi.")
     except:
@@ -1061,38 +1054,32 @@ async def hatirlat_sil(message: types.Message):
 async def yedekle(message: types.Message):
     await message.reply("📦 Yedekleme hazırlanıyor...")
     try:
-        # Google Sheets'ten verileri al
         inventory_data = inventory_sheet.get_all_values()
         history_data = history_sheet.get_all_values()
         ph_data = ph_sheet.get_all_values()
         reminders_data = reminders_sheet.get_all_values()
         
-        # CSV formatında birleştir
         import csv
         import io
+        import zipfile
         
         zip_buffer = io.BytesIO()
-        import zipfile
         with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-            # inventory.csv
             inv_csv = io.StringIO()
             writer = csv.writer(inv_csv)
             writer.writerows(inventory_data)
             zip_file.writestr('inventory.csv', inv_csv.getvalue().encode('utf-8-sig'))
             
-            # history.csv
             hist_csv = io.StringIO()
             writer = csv.writer(hist_csv)
             writer.writerows(history_data)
             zip_file.writestr('history.csv', hist_csv.getvalue().encode('utf-8-sig'))
             
-            # ph_records.csv
             ph_csv = io.StringIO()
             writer = csv.writer(ph_csv)
             writer.writerows(ph_data)
             zip_file.writestr('ph_records.csv', ph_csv.getvalue().encode('utf-8-sig'))
             
-            # reminders.csv
             rem_csv = io.StringIO()
             writer = csv.writer(rem_csv)
             writer.writerows(reminders_data)
@@ -1181,7 +1168,6 @@ async def kaydet_evet(message: types.Message):
             return
         
         if silinecek_kayit_hepsi:
-            # Tüm satırları temizle (başlık satırını koru)
             history_sheet.clear()
             headers = ['Tarih', 'Islem', 'Kullanilan_Malzeme_Miktar', 'pH', 'Not']
             history_sheet.append_row(headers)
@@ -1193,7 +1179,6 @@ async def kaydet_evet(message: types.Message):
         if silinecek_kayit_id:
             idx, silinen_islem, kayit_id = silinecek_kayit_id
             if idx < len(kayitlar):
-                # Stok düzeltmesi gerekiyor mu?
                 if son_kayit_geri_al and son_kayit_geri_al.get('malzeme') and silinen_islem.get('Islem') == "Kullanım":
                     stoklar = stok_oku()
                     for item in stoklar:
@@ -1208,7 +1193,6 @@ async def kaydet_evet(message: types.Message):
                             break
                     son_kayit_geri_al = None
                 
-                # Google Sheets'te satır sil (2. satır = ilk veri)
                 history_sheet.delete_rows(idx + 2)
                 
                 await message.reply(f"✅ ID {kayit_id} numaralı işlem silindi:\n📅 {silinen_islem.get('Tarih', '-')} - {silinen_islem.get('Islem', '-')}\n📝 {silinen_islem.get('Kullanilan_Malzeme_Miktar', '-')[:200]}")
@@ -1338,7 +1322,6 @@ async def process_callback(callback_query: types.CallbackQuery):
     
     await bot.answer_callback_query(callback_query.id)
     
-    # Ana menü
     if data == "menu_ana":
         await bot.edit_message_text("🌿 **Yasemin Asistan**\n\nNe yapmak istersin?", 
                                     chat_id=callback_query.message.chat.id, 
@@ -1396,7 +1379,6 @@ async def process_callback(callback_query: types.CallbackQuery):
                                     chat_id=callback_query.message.chat.id,
                                     message_id=callback_query.message.message_id)
     
-    # Sulama akışı
     elif data.startswith("su_"):
         miktar = data.split("_")[1]
         if miktar == "ozel":
@@ -1522,7 +1504,6 @@ async def process_callback(callback_query: types.CallbackQuery):
                                     chat_id=callback_query.message.chat.id,
                                     message_id=callback_query.message.message_id)
     
-    # Diğer menüler
     elif data == "menu_ph":
         await bot.edit_message_text("🔬 **pH KOMUTLARI**\n\n/ph [teneke] - Son pH\n/ph [teneke] hepsi - Tüm pH\n/ph_tumu - Tüm tenekeler\n/ph_ekle [teneke] [ph] - pH ekle",
                                     chat_id=callback_query.message.chat.id,
