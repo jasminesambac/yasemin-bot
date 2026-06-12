@@ -17,7 +17,8 @@ silinecek_gecmis_id = None
 silinecek_gecmis_hepsi = None
 silinecek_kayit_id = None
 silinecek_kayit_hepsi = None
-stok_uyarilari = {}  # {malzeme_adi: esik_miktar}
+stok_uyarilari = {}
+stok_uyari_temizlik_onay = False
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=API_TOKEN)
@@ -99,9 +100,8 @@ def hatirlatma_ekle(tarih, saat, islem):
         return False
 
 def stok_uyari_kontrol(malzeme_adi, kalan_miktar, birim):
-    """Stok uyarısı kontrolü"""
     for uyarilanan_malzeme, esik in stok_uyarilari.items():
-        if uyarilanan_malzeme.lower() in malzeme_adi.lower():
+        if uyarilanan_malzeme.lower() == malzeme_adi.lower():
             if kalan_miktar <= esik:
                 return True, esik
     return False, None
@@ -128,9 +128,11 @@ async def start(message: types.Message):
                          "/gecmis 14-05-2026 - Tarihli işlemler\n"
                          "/gecmis_sil 5 - ID ile işlem sil (onay için /gecmis_evet)\n"
                          "/rapor_aylik 05-2026 - Aylık rapor\n"
-                         "/stok_uyari NPK 100 - Stok uyarısı ekle\n"
+                         "/stok_uyari \"NPK 20-20-20 (Klimaks)\" 100 - Stok uyarısı ekle\n"
                          "/stok_uyari_sil NPK - Stok uyarısı sil\n"
                          "/stok_uyari_liste - Stok uyarılarını listele\n"
+                         "/stok_uyari_temizle - Tüm uyarıları sil (onaylı)\n"
+                         "/stok_uyari_evet - Tüm uyarıları silme onayı\n"
                          "/hatirlat 30-07-2026 10:00 Sula - Hatırlatma ekle\n"
                          "/hatirlatmalar - Bekleyen hatırlatmalar (ID ile)\n"
                          "/hatirlat_sil 1 - Hatırlatma sil\n"
@@ -160,47 +162,106 @@ async def yedekle(message: types.Message):
 async def stok_uyari_ekle(message: types.Message):
     param = message.get_args()
     if not param:
-        await message.reply("Örnek: /stok_uyari NPK 100\n\n/stok_uyari_sil NPK ile kaldırabilirsin.")
+        await message.reply("Örnek: /stok_uyari \"NPK 20-20-20 (Klimaks)\" 100\n\n/stok_uyari_liste ile mevcut uyarıları görebilirsin.")
         return
     
     parcalar = param.split()
     if len(parcalar) < 2:
-        await message.reply("Örnek: /stok_uyari NPK 100")
+        await message.reply("Örnek: /stok_uyari \"NPK 20-20-20 (Klimaks)\" 100")
         return
     
-    malzeme = parcalar[0]
     try:
-        esik = float(parcalar[1])
+        esik = float(parcalar[-1])
+        malzeme_aranan = " ".join(parcalar[:-1]).strip('"')
     except:
-        await message.reply("Eşik değeri sayı olmalı. Örnek: /stok_uyari NPK 100")
+        await message.reply("Eşik değeri sayı olmalı. Örnek: /stok_uyari \"NPK 20-20-20 (Klimaks)\" 100")
         return
     
-    stok_uyarilari[malzeme] = esik
-    await message.reply(f"✅ Stok uyarısı eklendi:\n📦 {malzeme} → {esik} gr altında uyarı verilecek.")
+    stoklar = stok_oku()
+    eslesenler = malzeme_bul(malzeme_aranan, stoklar)
+    
+    if not eslesenler:
+        await message.reply(f"❌ '{malzeme_aranan}' envanterde bulunamadı.")
+        return
+    
+    if len(eslesenler) > 1:
+        liste = "\n".join([f"• {item.get('Malzeme / Alet')}" for item in eslesenler[:5]])
+        await message.reply(f"⚠️ '{malzeme_aranan}' için birden fazla malzeme bulundu:\n\n{liste}\n\nLütfen tam adını yazın.\nÖrnek: /stok_uyari \"NPK 20-20-20 (Klimaks)\" 100")
+        return
+    
+    malzeme_adi = eslesenler[0].get('Malzeme / Alet')
+    stok_uyarilari[malzeme_adi] = esik
+    await message.reply(f"✅ Stok uyarısı eklendi:\n📦 {malzeme_adi}\n⚠️ {esik} gr altında uyarı verilecek.")
 
 @dp.message_handler(commands=['stok_uyari_sil'])
 async def stok_uyari_sil(message: types.Message):
     param = message.get_args()
     if not param:
-        await message.reply("Örnek: /stok_uyari_sil NPK")
+        await message.reply("Örnek: /stok_uyari_sil \"NPK 20-20-20 (Klimaks)\"")
         return
     
-    if param in stok_uyarilari:
-        del stok_uyarilari[param]
-        await message.reply(f"✅ {param} için stok uyarısı kaldırıldı.")
-    else:
-        await message.reply(f"❌ {param} için stok uyarısı bulunamadı.")
+    silinecekler = []
+    for malzeme in stok_uyarilari.keys():
+        if param.lower() in malzeme.lower():
+            silinecekler.append(malzeme)
+    
+    if not silinecekler:
+        await message.reply(f"❌ '{param}' için stok uyarısı bulunamadı.")
+        return
+    
+    if len(silinecekler) > 1:
+        liste = "\n".join([f"• {m}" for m in silinecekler])
+        await message.reply(f"⚠️ '{param}' için birden fazla uyarı bulundu:\n\n{liste}\n\nLütfen tam adını yazın.\nÖrnek: /stok_uyari_sil \"NPK 20-20-20 (Klimaks)\"")
+        return
+    
+    del stok_uyarilari[silinecekler[0]]
+    await message.reply(f"✅ {silinecekler[0]} için stok uyarısı kaldırıldı.")
 
 @dp.message_handler(commands=['stok_uyari_liste'])
 async def stok_uyari_liste(message: types.Message):
     if not stok_uyarilari:
-        await message.reply("📋 Aktif stok uyarısı yok.\n\n/stok_uyari NPK 100 ile ekleyebilirsin.")
+        await message.reply("📋 Aktif stok uyarısı yok.\n\n/stok_uyari \"NPK 20-20-20 (Klimaks)\" 100 ile ekleyebilirsin.")
         return
     
     mesaj = "📋 **AKTİF STOK UYARILARI**\n\n"
+    stoklar = stok_oku()
     for malzeme, esik in stok_uyarilari.items():
-        mesaj += f"• {malzeme}: {esik} gr altında uyarı\n"
+        kalan = "?"
+        for item in stoklar:
+            if item.get('Malzeme / Alet') == malzeme:
+                kalan = f"{item.get('Kalan Miktar')} {item.get('Birim')}"
+                break
+        mesaj += f"📦 {malzeme}\n   ⚠️ Eşik: {esik} gr | 📊 Güncel: {kalan}\n\n"
     await message.reply(mesaj)
+
+@dp.message_handler(commands=['stok_uyari_temizle'])
+async def stok_uyari_temizle(message: types.Message):
+    global stok_uyari_temizlik_onay
+    if not stok_uyarilari:
+        await message.reply("❌ Silinecek stok uyarısı yok.")
+        return
+    
+    stok_uyari_temizlik_onay = True
+    await message.reply(f"⚠️ **DİKKAT!**\n\n"
+                       f"TÜM stok uyarıları silinecek ({len(stok_uyarilari)} uyarı).\n\n"
+                       f"**Bu işlem GERİ DÖNÜŞÜMSÜZDÜR!**\n\n"
+                       f"30 saniye içinde `/stok_uyari_evet` yazın.")
+    
+    await asyncio.sleep(30)
+    if stok_uyari_temizlik_onay:
+        stok_uyari_temizlik_onay = False
+        await message.reply("⏰ Silme iptal edildi.")
+
+@dp.message_handler(commands=['stok_uyari_evet'])
+async def stok_uyari_evet(message: types.Message):
+    global stok_uyari_temizlik_onay, stok_uyarilari
+    if not stok_uyari_temizlik_onay:
+        await message.reply("❌ Silinecek uyarı yok veya süresi doldu. Önce /stok_uyari_temizle komutunu kullanın.")
+        return
+    
+    stok_uyarilari.clear()
+    stok_uyari_temizlik_onay = False
+    await message.reply("✅ Tüm stok uyarıları silindi.")
 
 # ==================== AYLIK RAPOR ====================
 @dp.message_handler(commands=['rapor_aylik'])
@@ -221,24 +282,9 @@ async def rapor_aylik(message: types.Message):
         
         veriler = satirlar[1:]
         
-        # Format dönüştürme
-        hedef_ay = ay_param
-        if '-' in ay_param:
-            parcalar = ay_param.split('-')
-            if len(parcalar) == 2 and len(parcalar[0]) == 2:
-                ay_kontrol1 = f"{parcalar[1]}-{parcalar[0]}"
-                ay_kontrol2 = f"-{parcalar[1]}-{parcalar[0]}"
-                ay_kontrol3 = f"{parcalar[0]}-{parcalar[1]}"
-            elif len(parcalar) == 2 and len(parcalar[0]) == 4:
-                ay_kontrol1 = ay_param
-                ay_kontrol2 = f"-{ay_param}"
-                ay_kontrol3 = f"{parcalar[1]}-{parcalar[0]}"
-            else:
-                await message.reply("Geçersiz format. Örnek: /rapor_aylik 05-2026")
-                return
-        else:
-            await message.reply("Geçersiz format. Örnek: /rapor_aylik 05-2026")
-            return
+        ay_kontrol1 = f"{ay_param[3:]}-{ay_param[:2]}"
+        ay_kontrol2 = f"-{ay_param[3:]}-{ay_param[:2]}"
+        ay_kontrol3 = ay_param
         
         ay_kayitlari = []
         for row in veriler:
@@ -374,7 +420,6 @@ async def kaydet(message: types.Message):
         await message.reply("Örnek: /kaydet 5 gr NPK veya /kaydet Sera kuruldu")
         return
     
-    # Sayı ile başlıyorsa (örn: 5 gr NPK) stok işlemi dene
     parcalar = islem.split()
     if len(parcalar) >= 3 and parcalar[0].replace('.', '').replace(',', '').isdigit():
         try:
@@ -438,7 +483,6 @@ async def kaydet(message: types.Message):
                 
                 history_ekle("Kullanım", malzeme_adi, miktar, birim)
                 
-                # Stok uyarısı kontrolü
                 uyari_var, esik = stok_uyari_kontrol(malzeme_adi, yeni_kalan, birim)
                 if uyari_var:
                     await message.reply(f"✅ {miktar:.1f} {birim} {malzeme_adi} kullanıldı.\n📊 Kalan: {yeni_kalan:.1f} {birim}\n\n⚠️ **STOK UYARISI!** {malzeme_adi} {esik} gr altına düştü!")
@@ -481,7 +525,6 @@ async def kaydet_geri_al(message: types.Message):
             await message.reply("❌ Geri alınacak kayıt yok.")
             return
         
-        # ID ile silme
         if param and param.isdigit():
             kayit_id = int(param)
             if kayit_id < 1 or kayit_id > len(veriler):
@@ -516,7 +559,6 @@ async def kaydet_geri_al(message: types.Message):
                 await message.reply("⏰ Silme iptal edildi.")
             return
         
-        # ID yoksa son işlemi sil (onaylı)
         son_islem = veriler[-1]
         kayit_id = len(veriler)
         silinecek_kayit_id = (len(veriler)-1, son_islem, kayit_id)
@@ -554,7 +596,6 @@ async def kaydet_evet(message: types.Message):
         basliklar = satirlar[0]
         veriler = satirlar[1:]
         
-        # Tümünü sil
         if silinecek_kayit_hepsi:
             with open('history.csv', 'w', encoding='utf-8-sig', newline='') as f:
                 writer = csv.writer(f)
@@ -564,13 +605,11 @@ async def kaydet_evet(message: types.Message):
             silinecek_kayit_hepsi = None
             return
         
-        # Tek kayıt sil
         if silinecek_kayit_id:
             idx, silinen_islem, kayit_id = silinecek_kayit_id
             if idx < len(veriler):
                 veriler.pop(idx)
                 
-                # Stok düzeltmesi gerekiyor mu?
                 if son_kayit_geri_al and son_kayit_geri_al.get('malzeme') and silinen_islem[1] == "Kullanım":
                     stoklar = stok_oku()
                     for item in stoklar:
