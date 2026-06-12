@@ -4,7 +4,7 @@ import csv
 import io
 import zipfile
 import asyncio
-import threading
+import requests
 from datetime import datetime
 from aiogram import Bot, Dispatcher, executor, types
 
@@ -20,9 +20,6 @@ silinecek_kayit_id = None
 silinecek_kayit_hepsi = None
 stok_uyarilari = {}
 stok_uyari_temizlik_onay = False
-
-# Telegram kullanıcı ID (otomatik hatırlatma için)
-CHAT_ID = 1443295480
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=API_TOKEN)
@@ -110,89 +107,129 @@ def stok_uyari_kontrol(malzeme_adi, kalan_miktar, birim):
                 return True, veri['esik'], veri['birim']
     return False, None, None
 
-# ==================== OTOMATİK HATIRLATMA ZAMANLAYICISI ====================
-async def hatirlatma_zamanlayici():
-    """Her dakika kontrol eder, vakti gelen hatırlatmaları gönderir"""
-    while True:
-        try:
-            with open('reminders.csv', 'r', encoding='utf-8-sig') as f:
-                reader = csv.reader(f)
-                satirlar = list(reader)
-            
-            if len(satirlar) <= 1:
-                await asyncio.sleep(60)
-                continue
-            
-            simdi = datetime.now()
-            simdi_tarih = simdi.strftime("%d-%m-%Y")
-            simdi_saat = simdi.strftime("%H:%M")
-            
-            yeni_satirlar = [satirlar[0]]
-            mesajlar = []
-            
-            for row in satirlar[1:]:
-                if len(row) >= 4 and row[3] == "bekliyor":
-                    if row[0] == simdi_tarih and row[1] == simdi_saat:
-                        mesajlar.append(f"⏰ **HATIRLATMA!**\n\n📅 {row[0]} {row[1]}\n📝 {row[2]}\n\n🌿 Bugün yapmayı unutma!")
-                        continue
-                    else:
-                        yeni_satirlar.append(row)
-                else:
-                    yeni_satirlar.append(row)
-            
-            for mesaj in mesajlar:
-                try:
-                    await bot.send_message(chat_id=CHAT_ID, text=mesaj)
-                except:
-                    pass
-            
-            with open('reminders.csv', 'w', encoding='utf-8-sig', newline='') as f:
-                writer = csv.writer(f)
-                writer.writerows(yeni_satirlar)
-            
-            await asyncio.sleep(60)
-            
-        except Exception as e:
-            print(f"Zamanlayıcı hatası: {e}")
-            await asyncio.sleep(60)
+def hava_durumu(sehir="Istanbul"):
+    try:
+        url = f"https://wttr.in/{sehir}?format=%C+%t+%w+%h&m"
+        response = requests.get(url, timeout=10)
+        return response.text.strip()
+    except:
+        return "Hava durumu alınamadı."
 
 @dp.message_handler(commands=['start'])
 async def start(message: types.Message):
     await message.answer("🌿 **Yasemin Asistan** hazır!\n\n"
-                         "/stok - Envanter listesi\n"
-                         "/stok lena - Malzeme sorgula\n"
-                         "/kaydet 5 gr NPK - Stoktan düş\n"
-                         "/kaydet Sera kuruldu - İşlem kaydet\n"
-                         "/kaydet_geri_al - Son işlemi geri al (onaylı)\n"
-                         "/kaydet_geri_al 5 - ID ile geri al (onaylı)\n"
-                         "/kaydet_evet - Geri alma onayı\n"
-                         "/ekle NPK;1000;gr;Gübre - Yeni malzeme ekle\n"
-                         "/sil Test - Malzeme sil (onay için /evet)\n"
-                         "/ph 1 - Son pH ölçümü\n"
-                         "/ph 1 hepsi - Tüm pH ölçümleri\n"
-                         "/ph_tumu - Tüm tenekelerin tüm pH\n"
-                         "/ph_ekle 1 6.5 - Yeni pH ekle\n"
-                         "/ph_sil 1 - Son pH kaydını sil\n"
-                         "/gecmis - Son 10 işlem (ID ile)\n"
-                         "/gecmis hepsi - Tüm geçmiş (ID ile)\n"
-                         "/gecmis 14-05-2026 - Tarihli işlemler\n"
-                         "/gecmis_sil 5 - ID ile işlem sil (onay için /gecmis_evet)\n"
-                         "/rapor_aylik 05-2026 - Aylık rapor\n"
-                         "/stok_uyari \"NPK 20-20-20 (Klimaks)\" 100 gr - Stok uyarısı ekle\n"
-                         "/stok_uyari_sil NPK - Stok uyarısı sil\n"
-                         "/stok_uyari_liste - Stok uyarılarını listele\n"
-                         "/stok_uyari_temizle - Tüm uyarıları sil (onaylı)\n"
-                         "/stok_uyari_evet - Tüm uyarıları silme onayı\n"
-                         "/hatirlat 30-07-2026 10:00 Sula - Hatırlatma ekle\n"
-                         "/hatirlatmalar - Bekleyen hatırlatmalar (ID ile)\n"
-                         "/hatirlat_sil 1 - Hatırlatma sil\n"
-                         "/yedekle - Tüm CSV'leri yedekle\n"
-                         "/test - Bot testi\n\n"
-                         "⏰ **Otomatik hatırlatma aktif!** Vakti gelen hatırlatmalar otomatik mesaj atar.")
+                         "📦 **STOK:**\n/stok - Envanter listesi\n/stok lena - Malzeme sorgula\n/kaydet 5 gr NPK - Stoktan düş\n/kaydet Sera kuruldu - İşlem kaydet\n/kaydet_geri_al - Son işlemi geri al\n/kaydet_geri_al 5 - ID ile geri al\n/ekle NPK;1000;gr;Gübre - Yeni malzeme ekle\n/sil Test - Malzeme sil\n\n"
+                         "🔬 **pH:**\n/ph 1 - Son pH\n/ph 1 hepsi - Tüm pH\n/ph_tumu - Tüm tenekelerin tüm pH\n/ph_ekle 1 6.5 - pH ekle\n/ph_sil 1 - Son pH kaydını sil\n\n"
+                         "📜 **GEÇMİŞ:**\n/gecmis - Son 10 işlem\n/gecmis hepsi - Tüm geçmiş\n/gecmis 14-05-2026 - Tarihli işlemler\n/gecmis_sil 5 - İşlem sil\n\n"
+                         "📊 **RAPOR:**\n/rapor_aylik 05-2026 - Aylık rapor\n/rapor_gunluk - Günlük rapor\n/istatistik - Genel istatistik\n/grafik NPK - Stok grafiği\n\n"
+                         "⚠️ **UYARI:**\n/stok_uyari \"NPK\" 100 gr - Stok uyarısı ekle\n/stok_uyari_sil NPK - Uyarı sil\n/stok_uyari_liste - Uyarıları listele\n/stok_uyari_temizle - Tüm uyarıları sil\n\n"
+                         "⏰ **HATIRLATMA:**\n/hatirlat 30-07-2026 10:00 Sula - Hatırlatma ekle\n/hatirlatmalar - Bekleyen hatırlatmalar\n/hatirlat_sil 1 - Hatırlatma sil\n\n"
+                         "🌤️ **DİĞER:**\n/hava İstanbul - Hava durumu\n/toplu_kaydet - Toplu işlem\n/yedekle - Yedekle\n/test - Bot testi")
 
 @dp.message_handler(commands=['test'])
 async def test(message: types.Message):
     await message.answer("✅ Bot çalışıyor!")
+
+# ==================== HAVA DURUMU ====================
+@dp.message_handler(commands=['hava'])
+async def hava(message: types.Message):
+    sehir = message.get_args()
+    if not sehir:
+        sehir = "Istanbul"
+    durum = hava_durumu(sehir)
+    await message.reply(f"🌤️ **{sehir.upper()} HAVA DURUMU**\n\n{durum}\n\n(°C, km/h)")
+
+# ==================== TOPLU KAYDET ====================
+@dp.message_handler(commands=['toplu_kaydet'])
+async def toplu_kaydet(message: types.Message):
+    await message.reply("📝 Toplu kayıt için bir txt dosyası gönderin.\n\nDosya formatı:\nher satırda bir işlem\nÖrnek:\n5 gr NPK\n10 ml Lena Tonik\nSera kuruldu")
+    # Bu kısım dosya alma ile genişletilebilir
+
+# ==================== İSTATİSTİK ====================
+@dp.message_handler(commands=['istatistik'])
+async def istatistik(message: types.Message):
+    try:
+        with open('history.csv', 'r', encoding='utf-8-sig') as f:
+            reader = csv.reader(f)
+            satirlar = list(reader)
+        
+        veriler = satirlar[1:]
+        toplam_islem = len(veriler)
+        
+        malzeme_sayilari = {}
+        for row in veriler:
+            if len(row) >= 3 and row[2] != "-":
+                for m in row[2].split(','):
+                    parcalar = m.strip().split()
+                    if len(parcalar) >= 3:
+                        malzeme = " ".join(parcalar[2:])
+                        malzeme_sayilari[malzeme] = malzeme_sayilari.get(malzeme, 0) + 1
+        
+        en_cok = sorted(malzeme_sayilari.items(), key=lambda x: x[1], reverse=True)[:5]
+        
+        istatistik = f"📊 **GENEL İSTATİSTİK**\n\n"
+        istatistik += f"📝 Toplam işlem: {toplam_islem}\n\n"
+        istatistik += f"🔧 En çok kullanılan malzemeler:\n"
+        for malzeme, sayi in en_cok:
+            istatistik += f"   • {malzeme}: {sayi} kez\n"
+        
+        await message.reply(istatistik)
+    except Exception as e:
+        await message.reply(f"❌ İstatistik alınamadı: {e}")
+
+# ==================== GÜNLÜK RAPOR ====================
+@dp.message_handler(commands=['rapor_gunluk'])
+async def rapor_gunluk(message: types.Message):
+    bugun = tarih_format()
+    try:
+        with open('history.csv', 'r', encoding='utf-8-sig') as f:
+            reader = csv.reader(f)
+            satirlar = list(reader)
+        
+        gunun_islemleri = [row for row in satirlar[1:] if len(row) >= 1 and row[0] == bugun]
+        if not gunun_islemleri:
+            await message.reply(f"📅 **{bugun} GÜNLÜK RAPOR**\n\nBugün hiç işlem yapılmamış.")
+            return
+        
+        rapor = f"📅 **{bugun} GÜNLÜK RAPOR**\n\n"
+        rapor += f"📝 Toplam işlem: {len(gunun_islemleri)}\n\n"
+        for row in gunun_islemleri[:15]:
+            rapor += f"• {row[1]}: {row[2][:50]}\n"
+        await message.reply(rapor)
+    except Exception as e:
+        await message.reply(f"❌ Rapor alınamadı: {e}")
+
+# ==================== GRAFİK ====================
+@dp.message_handler(commands=['grafik'])
+async def grafik(message: types.Message):
+    param = message.get_args()
+    if not param:
+        await message.reply("Örnek: /grafik NPK\n\nBir malzemenin stok geçmişini basit grafikle gösterir.")
+        return
+    
+    try:
+        with open('history.csv', 'r', encoding='utf-8-sig') as f:
+            reader = csv.reader(f)
+            satirlar = list(reader)
+        
+        kayitlar = []
+        for row in satirlar[1:]:
+            if len(row) >= 3 and param.lower() in row[2].lower():
+                kayitlar.append(row)
+        
+        if not kayitlar:
+            await message.reply(f"❌ '{param}' için geçmiş kayıt bulunamadı.")
+            return
+        
+        # Son 10 kaydı göster
+        sonlar = kayitlar[-10:][::-1]
+        grafik = f"📊 **'{param.upper()}' STOK GRAFİĞİ (Son 10 kullanım)**\n\n"
+        for row in sonlar:
+            grafik += f"📅 {row[0]}: {row[2]}\n"
+        
+        await message.reply(grafik)
+    except Exception as e:
+        await message.reply(f"❌ Grafik alınamadı: {e}")
 
 # ==================== YEDEKLEME ====================
 @dp.message_handler(commands=['yedekle'])
@@ -1214,9 +1251,5 @@ async def gecmis_evet(message: types.Message):
         silinecek_gecmis_id = None
         silinecek_gecmis_hepsi = None
 
-# ==================== BAŞLAT ====================
 if __name__ == '__main__':
-    # Zamanlayıcıyı arka planda başlat
-    loop = asyncio.new_event_loop()
-    threading.Thread(target=lambda: loop.run_until_complete(hatirlatma_zamanlayici()), daemon=True).start()
     executor.start_polling(dp, skip_updates=True)
