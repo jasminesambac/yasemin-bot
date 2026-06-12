@@ -15,6 +15,8 @@ silinecek_malzeme = None
 silinecek_ph_kayitlari = None
 silinecek_gecmis_id = None
 silinecek_gecmis_hepsi = None
+silinecek_kayit_id = None
+silinecek_kayit_hepsi = None
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=API_TOKEN)
@@ -101,9 +103,10 @@ async def start(message: types.Message):
                          "/stok - Envanter listesi\n"
                          "/stok lena - Malzeme sorgula\n"
                          "/kaydet 5 gr NPK - Stoktan düş\n"
-                         "/kaydet Sera kuruldu - İşlem kaydet (stok etkilemez)\n"
-                         "/kaydet_geri_al - Son işlemi geri al\n"
-                         "/kaydet_geri_al 5 - ID ile işlem geri al\n"
+                         "/kaydet Sera kuruldu - İşlem kaydet\n"
+                         "/kaydet_geri_al - Son işlemi geri al (onaylı)\n"
+                         "/kaydet_geri_al 5 - ID ile geri al (onaylı)\n"
+                         "/kaydet_evet - Geri alma onayı\n"
                          "/ekle NPK;1000;gr;Gübre - Yeni malzeme ekle\n"
                          "/sil Test - Malzeme sil (onay için /evet)\n"
                          "/ph 1 - Son pH ölçümü\n"
@@ -300,15 +303,14 @@ async def kaydet(message: types.Message):
             return
     
     else:
-        # Sayı ile başlamıyorsa (Çit döşendi, Sera kuruldu, vb.)
         history_ekle("İşlem", islem, "-", "-")
         await message.reply(f"✅ İşlem kaydedildi:\n📝 {islem}")
         return
 
-# ==================== KAYDET GERİ AL (ID ile) ====================
+# ==================== KAYDET GERİ AL (ONAYLI) ====================
 @dp.message_handler(commands=['kaydet_geri_al'])
 async def kaydet_geri_al(message: types.Message):
-    global son_kayit_geri_al
+    global silinecek_kayit_id, silinecek_kayit_hepsi, son_kayit_geri_al
     param = message.get_args()
     
     try:
@@ -335,59 +337,118 @@ async def kaydet_geri_al(message: types.Message):
                 return
             
             idx = kayit_id - 1
-            silinen_islem = veriler[idx]
-            veriler.pop(idx)
+            silinecek_kayit_id = (idx, veriler[idx], kayit_id)
             
-            # Stok düzeltmesi gerekiyor mu?
-            if son_kayit_geri_al and son_kayit_geri_al.get('malzeme') and silinen_islem[1] == "Kullanım":
-                stoklar = stok_oku()
-                for item in stoklar:
-                    if son_kayit_geri_al['malzeme'].lower() in item.get('Malzeme / Alet', '').lower():
-                        if son_kayit_geri_al['eski_kalan'] == 'Stok bol':
-                            item['Kalan Miktar'] = 'Stok bol'
-                        else:
-                            item['Kalan Miktar'] = str(son_kayit_geri_al['eski_kalan']).replace('.', ',')
-                        kullanilan = float(str(item.get('Kullanılan', '0')).replace(',', '.'))
-                        item['Kullanılan'] = str(kullanilan - son_kayit_geri_al['kullanilan']).replace('.', ',')
-                        stok_kaydet(stoklar)
-                        son_kayit_geri_al = None
-                        break
+            await message.reply(f"⚠️ **DİKKAT!**\n\n"
+                               f"ID: {kayit_id} numaralı işlem silinecek:\n"
+                               f"📅 {veriler[idx][0]} - {veriler[idx][1]}\n"
+                               f"📝 {veriler[idx][2][:200]}\n\n"
+                               f"**Bu işlem GERİ DÖNÜŞÜMSÜZDÜR!**\n\n"
+                               f"30 saniye içinde `/kaydet_evet` yazın.")
             
-            with open('history.csv', 'w', encoding='utf-8-sig', newline='') as f:
-                writer = csv.writer(f)
-                writer.writerow(basliklar)
-                writer.writerows(veriler)
-            
-            await message.reply(f"✅ ID {kayit_id} numaralı işlem geri alındı:\n📅 {silinen_islem[0]} - {silinen_islem[1]}\n📝 {silinen_islem[2][:200]}")
+            await asyncio.sleep(30)
+            if silinecek_kayit_id == (idx, veriler[idx], kayit_id):
+                silinecek_kayit_id = None
+                await message.reply("⏰ Silme iptal edildi.")
             return
         
-        # ID yoksa son işlemi sil
+        elif param and param.lower() == 'hepsi':
+            silinecek_kayit_hepsi = veriler.copy()
+            await message.reply(f"⚠️ **DİKKAT!**\n\n"
+                               f"TÜM geçmiş kayıtları silinecek ({len(veriler)} kayıt).\n\n"
+                               f"**Bu işlem GERİ DÖNÜŞÜMSÜZDÜR!**\n\n"
+                               f"30 saniye içinde `/kaydet_evet` yazın.")
+            await asyncio.sleep(30)
+            if silinecek_kayit_hepsi:
+                silinecek_kayit_hepsi = None
+                await message.reply("⏰ Silme iptal edildi.")
+            return
+        
+        # ID yoksa son işlemi sil (onaylı)
         son_islem = veriler[-1]
-        veriler.pop()
+        kayit_id = len(veriler)
+        silinecek_kayit_id = (len(vereler)-1, son_islem, kayit_id)
         
-        if son_kayit_geri_al and son_kayit_geri_al.get('malzeme') and son_islem[1] == "Kullanım":
-            stoklar = stok_oku()
-            for item in stoklar:
-                if son_kayit_geri_al['malzeme'].lower() in item.get('Malzeme / Alet', '').lower():
-                    if son_kayit_geri_al['eski_kalan'] == 'Stok bol':
-                        item['Kalan Miktar'] = 'Stok bol'
-                    else:
-                        item['Kalan Miktar'] = str(son_kayit_geri_al['eski_kalan']).replace('.', ',')
-                    kullanilan = float(str(item.get('Kullanılan', '0')).replace(',', '.'))
-                    item['Kullanılan'] = str(kullanilan - son_kayit_geri_al['kullanilan']).replace('.', ',')
-                    stok_kaydet(stoklar)
-                    break
+        await message.reply(f"⚠️ **DİKKAT!**\n\n"
+                           f"SON işlem silinecek:\n"
+                           f"📅 {son_islem[0]} - {son_islem[1]}\n"
+                           f"📝 {son_islem[2][:200]}\n\n"
+                           f"**Bu işlem GERİ DÖNÜŞÜMSÜZDÜR!**\n\n"
+                           f"30 saniye içinde `/kaydet_evet` yazın.")
         
-        with open('history.csv', 'w', encoding='utf-8-sig', newline='') as f:
-            writer = csv.writer(f)
-            writer.writerow(basliklar)
-            writer.writerows(veriler)
-        
-        son_kayit_geri_al = None
-        await message.reply(f"✅ Son işlem geri alındı:\n📅 {son_islem[0]} - {son_islem[1]}\n📝 {son_islem[2][:200]}")
+        await asyncio.sleep(30)
+        if silinecek_kayit_id == (len(veriler)-1, son_islem, kayit_id):
+            silinecek_kayit_id = None
+            await message.reply("⏰ Silme iptal edildi.")
         
     except Exception as e:
         await message.reply(f"❌ Hata: {e}")
+
+@dp.message_handler(commands=['kaydet_evet'])
+async def kaydet_evet(message: types.Message):
+    global silinecek_kayit_id, silinecek_kayit_hepsi, son_kayit_geri_al
+    
+    try:
+        with open('history.csv', 'r', encoding='utf-8-sig') as f:
+            reader = csv.reader(f)
+            satirlar = list(reader)
+        
+        if len(satirlar) <= 1:
+            await message.reply("❌ Silinecek kayıt yok.")
+            silinecek_kayit_id = None
+            silinecek_kayit_hepsi = None
+            return
+        
+        basliklar = satirlar[0]
+        veriler = satirlar[1:]
+        
+        # Tümünü sil
+        if silinecek_kayit_hepsi:
+            with open('history.csv', 'w', encoding='utf-8-sig', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow(basliklar)
+            await message.reply(f"✅ Tüm geçmiş kayıtları silindi.")
+            son_kayit_geri_al = None
+            silinecek_kayit_hepsi = None
+            return
+        
+        # Tek kayıt sil
+        if silinecek_kayit_id:
+            idx, silinen_islem, kayit_id = silinecek_kayit_id
+            if idx < len(veriler):
+                veriler.pop(idx)
+                
+                # Stok düzeltmesi gerekiyor mu?
+                if son_kayit_geri_al and son_kayit_geri_al.get('malzeme') and silinen_islem[1] == "Kullanım":
+                    stoklar = stok_oku()
+                    for item in stoklar:
+                        if son_kayit_geri_al['malzeme'].lower() in item.get('Malzeme / Alet', '').lower():
+                            if son_kayit_geri_al['eski_kalan'] == 'Stok bol':
+                                item['Kalan Miktar'] = 'Stok bol'
+                            else:
+                                item['Kalan Miktar'] = str(son_kayit_geri_al['eski_kalan']).replace('.', ',')
+                            kullanilan = float(str(item.get('Kullanılan', '0')).replace(',', '.'))
+                            item['Kullanılan'] = str(kullanilan - son_kayit_geri_al['kullanilan']).replace('.', ',')
+                            stok_kaydet(stoklar)
+                            break
+                    son_kayit_geri_al = None
+                
+                with open('history.csv', 'w', encoding='utf-8-sig', newline='') as f:
+                    writer = csv.writer(f)
+                    writer.writerow(basliklar)
+                    writer.writerows(veriler)
+                
+                await message.reply(f"✅ ID {kayit_id} numaralı işlem silindi:\n📅 {silinen_islem[0]} - {silinen_islem[1]}\n📝 {silinen_islem[2][:200]}")
+                silinecek_kayit_id = None
+                return
+        
+        await message.reply("❌ Silinecek kayıt bulunamadı.")
+        silinecek_kayit_id = None
+        
+    except Exception as e:
+        await message.reply(f"❌ Hata: {e}")
+        silinecek_kayit_id = None
+        silinecek_kayit_hepsi = None
 
 # ==================== STOK ====================
 @dp.message_handler(commands=['stok'])
@@ -664,7 +725,8 @@ async def ph_sil(message: types.Message):
     param = message.get_args()
     if not param:
         await message.reply("Örnek:\n/ph_sil 1 - Son kaydı sil\n/ph_sil 1 hepsi - Tüm kayıtları sil\n/ph_sil 1 19-05-2026 - Tarihli kaydı sil")
-        return    
+        return
+    
     parcalar = param.split()
     teneke_no = parcalar[0]
     
