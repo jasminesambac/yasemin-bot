@@ -82,6 +82,17 @@ def malzeme_bul(aranan, stoklar):
             eslesenler.append(item)
     return eslesenler
 
+# ==================== HATIRLATICI FONKSİYONLARI ====================
+def hatirlatma_ekle(tarih, saat, islem):
+    try:
+        with open('reminders.csv', 'a', encoding='utf-8-sig', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow([tarih, saat, islem, "bekliyor"])
+        return True
+    except Exception as e:
+        print(f"Hatırlatma ekleme hatası: {e}")
+        return False
+
 @dp.message_handler(commands=['start'])
 async def start(message: types.Message):
     await message.answer("🌿 **Yasemin Asistan** hazır!\n\n"
@@ -100,11 +111,90 @@ async def start(message: types.Message):
                          "/gecmis hepsi - Tüm geçmiş (ID ile)\n"
                          "/gecmis 14-05-2026 - Tarihli işlemler\n"
                          "/gecmis_sil 5 - ID ile işlem sil (onay için /gecmis_evet)\n"
+                         "/hatirlat 30-07-2026 10:00 Sula - Hatırlatma ekle\n"
+                         "/hatirlatmalar - Bekleyen hatırlatmalar\n"
+                         "/hatirlat_sil 1 - Hatırlatma sil\n"
                          "/test - Bot testi")
 
 @dp.message_handler(commands=['test'])
 async def test(message: types.Message):
     await message.answer("✅ Bot çalışıyor!")
+
+# ==================== HATIRLATMA ====================
+@dp.message_handler(commands=['hatirlat'])
+async def hatirlat(message: types.Message):
+    param = message.get_args()
+    if not param:
+        await message.reply("Örnek: /hatirlat 30-07-2026 10:00 Sula")
+        return
+    
+    parcalar = param.split(maxsplit=2)
+    if len(parcalar) < 3:
+        await message.reply("Format: /hatirlat gun-ay-yil saat islem\nÖrnek: /hatirlat 30-07-2026 10:00 Sula")
+        return
+    
+    tarih, saat, islem = parcalar
+    if hatirlatma_ekle(tarih, saat, islem):
+        await message.reply(f"✅ Hatırlatma eklendi!\n📅 {tarih} {saat}\n📝 {islem}\n\n⚠️ Not: Otomatik mesaj için zamanlayıcı henüz aktif değil.")
+    else:
+        await message.reply("❌ Hata.")
+
+@dp.message_handler(commands=['hatirlatmalar'])
+async def list_hatirlatmalar(message: types.Message):
+    try:
+        with open('reminders.csv', 'r', encoding='utf-8-sig') as f:
+            reader = csv.reader(f)
+            satirlar = list(reader)
+        
+        if len(satirlar) <= 1:
+            await message.reply("Henüz hatırlatma yok. /hatirlat ile ekleyebilirsin.")
+            return
+        
+        bekleyenler = []
+        for i, row in enumerate(satirlar[1:], 1):
+            if len(row) >= 4 and row[3] == "bekliyor":
+                bekleyenler.append((i, row))
+        
+        if not bekleyenler:
+            await message.reply("✅ Bekleyen hatırlatma yok.")
+            return
+        
+        mesaj = "📅 **BEKLEYEN HATIRLATMALAR**\n\n"
+        for i, row in bekleyenler:
+            mesaj += f"**ID: {i}** | {row[0]} {row[1]} - {row[2]}\n"
+        await message.reply(mesaj[:4000])
+    except:
+        await message.reply("Dosya okuma hatası. reminders.csv dosyası var mı?")
+
+@dp.message_handler(commands=['hatirlat_sil'])
+async def hatirlat_sil(message: types.Message):
+    param = message.get_args()
+    if not param:
+        await message.reply("Örnek: /hatirlat_sil 1\n\nID'yi /hatirlatmalar ile görebilirsin.")
+        return
+    
+    try:
+        with open('reminders.csv', 'r', encoding='utf-8-sig') as f:
+            reader = csv.reader(f)
+            satirlar = list(reader)
+        
+        if len(satirlar) <= 1:
+            await message.reply("❌ Hatırlatma yok.")
+            return
+        
+        idx = int(param)
+        if idx < 1 or idx >= len(satirlar):
+            await message.reply("❌ Geçersiz ID.")
+            return
+        
+        silinen = satirlar.pop(idx)
+        with open('reminders.csv', 'w', encoding='utf-8-sig', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerows(satirlar)
+        
+        await message.reply(f"✅ Hatırlatma silindi:\n{silinen[0]} {silinen[1]} - {silinen[2]}")
+    except:
+        await message.reply("❌ Hata oluştu.")
 
 # ==================== STOK ====================
 @dp.message_handler(commands=['stok'])
@@ -620,16 +710,15 @@ async def gecmis(message: types.Message):
                 await message.reply(mesaj[:4000])
         
         else:
-            # Tarihe göre filtrele - HER İKİ FORMATI DA DENE
             tarih_kayitlari = [(i+1, row) for i, row in enumerate(veriler) if row[0] == param]
             
             if not tarih_kayitlari and '-' in param:
                 parcalar = param.split('-')
                 if len(parcalar) == 3:
-                    if len(parcalar[0]) == 4:  # YYYY-AA-GG ise
+                    if len(parcalar[0]) == 4:
                         ters_param = f"{parcalar[2]}-{parcalar[1]}-{parcalar[0]}"
                         tarih_kayitlari = [(i+1, row) for i, row in enumerate(veriler) if row[0] == ters_param]
-                    else:  # GG-AA-YYYY ise
+                    else:
                         ters_param = f"{parcalar[2]}-{parcalar[1]}-{parcalar[0]}"
                         tarih_kayitlari = [(i+1, row) for i, row in enumerate(veriler) if row[0] == ters_param]
             
