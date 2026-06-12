@@ -174,7 +174,7 @@ async def start(message: types.Message):
                          "/kaydet [işlem] - Not kaydet (ör: /kaydet Sera kuruldu)\n"
                          "/kaydet_geri_al - Son işlemi geri al\n"
                          "/kaydet_geri_al [id] - ID ile geri al\n"
-                         "/ekle [ad];[miktar];[birim];[görev] - Yeni malzeme ekle\n"
+                         "/ekle [ad];[miktar];[birim];[görev] - Yeni malzeme ekle (ör: /ekle NPK;1000;gr;Gübre)\n"
                          "/sil [malzeme] - Malzeme sil (onay: /evet)\n\n"
                          "🔬 **pH KOMUTLARI:**\n"
                          "/ph [teneke] - Son pH (ör: /ph 1)\n"
@@ -203,8 +203,12 @@ async def start(message: types.Message):
                          "/hatirlat_sil [id] - Hatırlatma sil\n\n"
                          "🤖 **YAPAY ZEKA:**\n"
                          "/sor [soru] - Agnes AI'ya sor\n\n"
-                         "🌤️ **DİĞER:**\n"
-                         "/hava [şehir] - Hava durumu (ör: /hava İstanbul)\n"
+                         "🌤️ **HAVA DURUMU:**\n"
+                         "/hava [şehir] - Anlık hava (ör: /hava İstanbul)\n"
+                         "/hava_gunluk [şehir] - Günlük tahmin\n"
+                         "/hava_haftalik [şehir] - 7 günlük tahmin\n"
+                         "/hava_aylik [şehir] - Aylık özet\n\n"
+                         "💾 **DİĞER:**\n"
                          "/yedekle - Tüm CSV'leri yedekle\n"
                          "/test - Bot testi")
 
@@ -219,7 +223,43 @@ async def hava(message: types.Message):
     if not sehir:
         sehir = "Istanbul"
     durum = hava_durumu(sehir)
-    await message.reply(f"🌤️ **{sehir.upper()} HAVA DURUMU**\n\n{durum}\n\n(°C, km/h)")
+    await message.reply(f"🌤️ **{sehir.upper()} ANLIK HAVA DURUMU**\n\n{durum}\n\n(°C, km/h)")
+
+@dp.message_handler(commands=['hava_gunluk'])
+async def hava_gunluk(message: types.Message):
+    sehir = message.get_args()
+    if not sehir:
+        sehir = "Istanbul"
+    try:
+        url = f"https://wttr.in/{sehir}?format=%C+%t+%w+%h&m&0"
+        response = requests.get(url, timeout=10)
+        await message.reply(f"📅 **{sehir.upper()} GÜNLÜK HAVA TAHMİNİ**\n\n{response.text.strip()}")
+    except:
+        await message.reply("❌ Hava durumu alınamadı.")
+
+@dp.message_handler(commands=['hava_haftalik'])
+async def hava_haftalik(message: types.Message):
+    sehir = message.get_args()
+    if not sehir:
+        sehir = "Istanbul"
+    try:
+        url = f"https://wttr.in/{sehir}?format=%C+%t+%w+%h&m&1..7"
+        response = requests.get(url, timeout=10)
+        await message.reply(f"📆 **{sehir.upper()} 7 GÜNLÜK HAVA TAHMİNİ**\n\n{response.text.strip()}")
+    except:
+        await message.reply("❌ Hava durumu alınamadı.")
+
+@dp.message_handler(commands=['hava_aylik'])
+async def hava_aylik(message: types.Message):
+    sehir = message.get_args()
+    if not sehir:
+        sehir = "Istanbul"
+    try:
+        url = f"https://wttr.in/{sehir}?format=%C+%t+%w+%h&m&M"
+        response = requests.get(url, timeout=10)
+        await message.reply(f"📊 **{sehir.upper()} AYLIK HAVA ÖZETİ**\n\n{response.text.strip()}")
+    except:
+        await message.reply("❌ Hava durumu alınamadı.")
 
 # ==================== TOPLU KAYDET ====================
 @dp.message_handler(commands=['toplu_kaydet'])
