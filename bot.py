@@ -1,6 +1,8 @@
 import os
 import logging
 import csv
+import io
+import zipfile
 from datetime import datetime
 from aiogram import Bot, Dispatcher, executor, types
 
@@ -113,11 +115,26 @@ async def start(message: types.Message):
                          "/hatirlat 30-07-2026 10:00 Sula - Hatırlatma ekle\n"
                          "/hatirlatmalar - Bekleyen hatırlatmalar (ID ile)\n"
                          "/hatirlat_sil 1 - Hatırlatma sil\n"
+                         "/yedekle - Tüm CSV'leri yedekle\n"
                          "/test - Bot testi")
 
 @dp.message_handler(commands=['test'])
 async def test(message: types.Message):
     await message.answer("✅ Bot çalışıyor!")
+
+# ==================== YEDEKLEME ====================
+@dp.message_handler(commands=['yedekle'])
+async def yedekle(message: types.Message):
+    await message.reply("📦 Yedekleme hazırlanıyor...")
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+        for dosya in ['inventory.csv', 'history.csv', 'ph_records.csv', 'reminders.csv']:
+            try:
+                zip_file.write(dosya)
+            except:
+                pass
+    zip_buffer.seek(0)
+    await message.reply_document(document=('yasemin_yedek.zip', zip_buffer), caption="📦 Yedek dosyaları")
 
 # ==================== HATIRLATMA ====================
 @dp.message_handler(commands=['hatirlat'])
