@@ -17,7 +17,7 @@ silinecek_gecmis_id = None
 silinecek_gecmis_hepsi = None
 silinecek_kayit_id = None
 silinecek_kayit_hepsi = None
-stok_uyarilari = {}
+stok_uyarilari = {}  # {malzeme_adi: {'esik': 100, 'birim': 'gr'}}
 stok_uyari_temizlik_onay = False
 
 logging.basicConfig(level=logging.INFO)
@@ -100,11 +100,11 @@ def hatirlatma_ekle(tarih, saat, islem):
         return False
 
 def stok_uyari_kontrol(malzeme_adi, kalan_miktar, birim):
-    for uyarilanan_malzeme, esik in stok_uyarilari.items():
+    for uyarilanan_malzeme, veri in stok_uyarilari.items():
         if uyarilanan_malzeme.lower() == malzeme_adi.lower():
-            if kalan_miktar <= esik:
-                return True, esik
-    return False, None
+            if veri['birim'].lower() == birim.lower() and kalan_miktar <= veri['esik']:
+                return True, veri['esik'], veri['birim']
+    return False, None, None
 
 @dp.message_handler(commands=['start'])
 async def start(message: types.Message):
@@ -128,7 +128,7 @@ async def start(message: types.Message):
                          "/gecmis 14-05-2026 - Tarihli işlemler\n"
                          "/gecmis_sil 5 - ID ile işlem sil (onay için /gecmis_evet)\n"
                          "/rapor_aylik 05-2026 - Aylık rapor\n"
-                         "/stok_uyari \"NPK 20-20-20 (Klimaks)\" 100 - Stok uyarısı ekle\n"
+                         "/stok_uyari \"NPK 20-20-20 (Klimaks)\" 100 gr - Stok uyarısı ekle\n"
                          "/stok_uyari_sil NPK - Stok uyarısı sil\n"
                          "/stok_uyari_liste - Stok uyarılarını listele\n"
                          "/stok_uyari_temizle - Tüm uyarıları sil (onaylı)\n"
@@ -162,19 +162,23 @@ async def yedekle(message: types.Message):
 async def stok_uyari_ekle(message: types.Message):
     param = message.get_args()
     if not param:
-        await message.reply("Örnek: /stok_uyari \"NPK 20-20-20 (Klimaks)\" 100\n\n/stok_uyari_liste ile mevcut uyarıları görebilirsin.")
+        await message.reply("Örnek: /stok_uyari \"NPK 20-20-20 (Klimaks)\" 100 gr\n\nBirimler: gr, ml, l, adet")
         return
     
     parcalar = param.split()
-    if len(parcalar) < 2:
-        await message.reply("Örnek: /stok_uyari \"NPK 20-20-20 (Klimaks)\" 100")
+    if len(parcalar) < 3:
+        await message.reply("Örnek: /stok_uyari \"NPK 20-20-20 (Klimaks)\" 100 gr")
         return
     
     try:
-        esik = float(parcalar[-1])
-        malzeme_aranan = " ".join(parcalar[:-1]).strip('"')
+        esik = float(parcalar[-2])
+        birim = parcalar[-1].lower()
+        if birim not in ['gr', 'ml', 'l', 'adet']:
+            await message.reply("Birim 'gr', 'ml', 'l' veya 'adet' olmalı.")
+            return
+        malzeme_aranan = " ".join(parcalar[:-2]).strip('"')
     except:
-        await message.reply("Eşik değeri sayı olmalı. Örnek: /stok_uyari \"NPK 20-20-20 (Klimaks)\" 100")
+        await message.reply("Örnek: /stok_uyari \"NPK 20-20-20 (Klimaks)\" 100 gr")
         return
     
     stoklar = stok_oku()
@@ -186,12 +190,12 @@ async def stok_uyari_ekle(message: types.Message):
     
     if len(eslesenler) > 1:
         liste = "\n".join([f"• {item.get('Malzeme / Alet')}" for item in eslesenler[:5]])
-        await message.reply(f"⚠️ '{malzeme_aranan}' için birden fazla malzeme bulundu:\n\n{liste}\n\nLütfen tam adını yazın.\nÖrnek: /stok_uyari \"NPK 20-20-20 (Klimaks)\" 100")
+        await message.reply(f"⚠️ '{malzeme_aranan}' için birden fazla malzeme bulundu:\n\n{liste}\n\nLütfen tam adını yazın.\nÖrnek: /stok_uyari \"NPK 20-20-20 (Klimaks)\" 100 gr")
         return
     
     malzeme_adi = eslesenler[0].get('Malzeme / Alet')
-    stok_uyarilari[malzeme_adi] = esik
-    await message.reply(f"✅ Stok uyarısı eklendi:\n📦 {malzeme_adi}\n⚠️ {esik} gr altında uyarı verilecek.")
+    stok_uyarilari[malzeme_adi] = {'esik': esik, 'birim': birim}
+    await message.reply(f"✅ Stok uyarısı eklendi:\n📦 {malzeme_adi}\n⚠️ {esik} {birim} altında uyarı verilecek.")
 
 @dp.message_handler(commands=['stok_uyari_sil'])
 async def stok_uyari_sil(message: types.Message):
@@ -220,18 +224,18 @@ async def stok_uyari_sil(message: types.Message):
 @dp.message_handler(commands=['stok_uyari_liste'])
 async def stok_uyari_liste(message: types.Message):
     if not stok_uyarilari:
-        await message.reply("📋 Aktif stok uyarısı yok.\n\n/stok_uyari \"NPK 20-20-20 (Klimaks)\" 100 ile ekleyebilirsin.")
+        await message.reply("📋 Aktif stok uyarısı yok.\n\n/stok_uyari \"NPK 20-20-20 (Klimaks)\" 100 gr ile ekleyebilirsin.")
         return
     
     mesaj = "📋 **AKTİF STOK UYARILARI**\n\n"
     stoklar = stok_oku()
-    for malzeme, esik in stok_uyarilari.items():
+    for malzeme, veri in stok_uyarilari.items():
         kalan = "?"
         for item in stoklar:
             if item.get('Malzeme / Alet') == malzeme:
                 kalan = f"{item.get('Kalan Miktar')} {item.get('Birim')}"
                 break
-        mesaj += f"📦 {malzeme}\n   ⚠️ Eşik: {esik} gr | 📊 Güncel: {kalan}\n\n"
+        mesaj += f"📦 {malzeme}\n   ⚠️ Eşik: {veri['esik']} {veri['birim']} | 📊 Güncel: {kalan}\n\n"
     await message.reply(mesaj)
 
 @dp.message_handler(commands=['stok_uyari_temizle'])
@@ -483,9 +487,9 @@ async def kaydet(message: types.Message):
                 
                 history_ekle("Kullanım", malzeme_adi, miktar, birim)
                 
-                uyari_var, esik = stok_uyari_kontrol(malzeme_adi, yeni_kalan, birim)
+                uyari_var, esik, uyari_birimi = stok_uyari_kontrol(malzeme_adi, yeni_kalan, birim)
                 if uyari_var:
-                    await message.reply(f"✅ {miktar:.1f} {birim} {malzeme_adi} kullanıldı.\n📊 Kalan: {yeni_kalan:.1f} {birim}\n\n⚠️ **STOK UYARISI!** {malzeme_adi} {esik} gr altına düştü!")
+                    await message.reply(f"✅ {miktar:.1f} {birim} {malzeme_adi} kullanıldı.\n📊 Kalan: {yeni_kalan:.1f} {birim}\n\n⚠️ **STOK UYARISI!** {malzeme_adi} {esik} {uyari_birimi} altına düştü!")
                 else:
                     await message.reply(f"✅ {miktar:.1f} {birim} {malzeme_adi} kullanıldı.\n📊 Kalan: {yeni_kalan:.1f} {birim}")
                 return
