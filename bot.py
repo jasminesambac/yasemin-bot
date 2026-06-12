@@ -3,6 +3,7 @@ import logging
 import csv
 import io
 import zipfile
+import asyncio
 from datetime import datetime
 from aiogram import Bot, Dispatcher, executor, types
 
@@ -102,6 +103,7 @@ async def start(message: types.Message):
                          "/kaydet 5 gr NPK - Stoktan düş\n"
                          "/kaydet Sera kuruldu - İşlem kaydet (stok etkilemez)\n"
                          "/kaydet_geri_al - Son işlemi geri al\n"
+                         "/kaydet_geri_al 5 - ID ile işlem geri al\n"
                          "/ekle NPK;1000;gr;Gübre - Yeni malzeme ekle\n"
                          "/sil Test - Malzeme sil (onay için /evet)\n"
                          "/ph 1 - Son pH ölçümü\n"
@@ -230,7 +232,6 @@ async def kaydet(message: types.Message):
             birim = parcalar[1]
             malzeme_aranan = " ".join(parcalar[2:])
         except:
-            # Sayı okunamadı, sadece history'ye kaydet
             history_ekle("İşlem", islem, "-", "-")
             await message.reply(f"✅ İşlem kaydedildi:\n📝 {islem}")
             return
@@ -239,7 +240,6 @@ async def kaydet(message: types.Message):
         eslesenler = malzeme_bul(malzeme_aranan, stoklar)
         
         if not eslesenler:
-            # Stokta bulunamadı, sadece history'ye kaydet
             history_ekle("İşlem", islem, "-", "-")
             await message.reply(f"✅ İşlem kaydedildi (stokta bulunamadı):\n📝 {islem}")
             return
@@ -305,31 +305,89 @@ async def kaydet(message: types.Message):
         await message.reply(f"✅ İşlem kaydedildi:\n📝 {islem}")
         return
 
+# ==================== KAYDET GERİ AL (ID ile) ====================
 @dp.message_handler(commands=['kaydet_geri_al'])
 async def kaydet_geri_al(message: types.Message):
     global son_kayit_geri_al
-    if not son_kayit_geri_al:
-        await message.reply("❌ Geri alınacak kayıt yok")
-        return
+    param = message.get_args()
     
-    stoklar = stok_oku()
-    for item in stoklar:
-        if son_kayit_geri_al['malzeme'].lower() in item.get('Malzeme / Alet', '').lower():
-            if son_kayit_geri_al['eski_kalan'] == 'Stok bol':
-                item['Kalan Miktar'] = 'Stok bol'
-            else:
-                item['Kalan Miktar'] = str(son_kayit_geri_al['eski_kalan']).replace('.', ',')
-            kullanilan = float(str(item.get('Kullanılan', '0')).replace(',', '.'))
-            item['Kullanılan'] = str(kullanilan - son_kayit_geri_al['kullanilan']).replace('.', ',')
-            stok_kaydet(stoklar)
-            
-            miktar = son_kayit_geri_al['kullanilan']
-            birim = son_kayit_geri_al['birim']
-            malzeme = son_kayit_geri_al['malzeme']
-            son_kayit_geri_al = None
-            await message.reply(f"✅ Geri alındı: {malzeme} +{miktar:.1f} {birim}")
+    try:
+        with open('history.csv', 'r', encoding='utf-8-sig') as f:
+            reader = csv.reader(f)
+            satirlar = list(reader)
+        
+        if len(satirlar) <= 1:
+            await message.reply("❌ Geri alınacak kayıt yok.")
             return
-    await message.reply("❌ Malzeme bulunamadı")
+        
+        basliklar = satirlar[0]
+        veriler = satirlar[1:]
+        
+        if not veriler:
+            await message.reply("❌ Geri alınacak kayıt yok.")
+            return
+        
+        # ID ile silme
+        if param and param.isdigit():
+            kayit_id = int(param)
+            if kayit_id < 1 or kayit_id > len(veriler):
+                await message.reply(f"❌ Geçersiz ID. 1 ile {len(veriler)} arasında bir sayı girin.\n\nID'leri /gecmis ile görebilirsin.")
+                return
+            
+            idx = kayit_id - 1
+            silinen_islem = veriler[idx]
+            veriler.pop(idx)
+            
+            # Stok düzeltmesi gerekiyor mu?
+            if son_kayit_geri_al and son_kayit_geri_al.get('malzeme') and silinen_islem[1] == "Kullanım":
+                stoklar = stok_oku()
+                for item in stoklar:
+                    if son_kayit_geri_al['malzeme'].lower() in item.get('Malzeme / Alet', '').lower():
+                        if son_kayit_geri_al['eski_kalan'] == 'Stok bol':
+                            item['Kalan Miktar'] = 'Stok bol'
+                        else:
+                            item['Kalan Miktar'] = str(son_kayit_geri_al['eski_kalan']).replace('.', ',')
+                        kullanilan = float(str(item.get('Kullanılan', '0')).replace(',', '.'))
+                        item['Kullanılan'] = str(kullanilan - son_kayit_geri_al['kullanilan']).replace('.', ',')
+                        stok_kaydet(stoklar)
+                        son_kayit_geri_al = None
+                        break
+            
+            with open('history.csv', 'w', encoding='utf-8-sig', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow(basliklar)
+                writer.writerows(veriler)
+            
+            await message.reply(f"✅ ID {kayit_id} numaralı işlem geri alındı:\n📅 {silinen_islem[0]} - {silinen_islem[1]}\n📝 {silinen_islem[2][:200]}")
+            return
+        
+        # ID yoksa son işlemi sil
+        son_islem = veriler[-1]
+        veriler.pop()
+        
+        if son_kayit_geri_al and son_kayit_geri_al.get('malzeme') and son_islem[1] == "Kullanım":
+            stoklar = stok_oku()
+            for item in stoklar:
+                if son_kayit_geri_al['malzeme'].lower() in item.get('Malzeme / Alet', '').lower():
+                    if son_kayit_geri_al['eski_kalan'] == 'Stok bol':
+                        item['Kalan Miktar'] = 'Stok bol'
+                    else:
+                        item['Kalan Miktar'] = str(son_kayit_geri_al['eski_kalan']).replace('.', ',')
+                    kullanilan = float(str(item.get('Kullanılan', '0')).replace(',', '.'))
+                    item['Kullanılan'] = str(kullanilan - son_kayit_geri_al['kullanilan']).replace('.', ',')
+                    stok_kaydet(stoklar)
+                    break
+        
+        with open('history.csv', 'w', encoding='utf-8-sig', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(basliklar)
+            writer.writerows(veriler)
+        
+        son_kayit_geri_al = None
+        await message.reply(f"✅ Son işlem geri alındı:\n📅 {son_islem[0]} - {son_islem[1]}\n📝 {son_islem[2][:200]}")
+        
+    except Exception as e:
+        await message.reply(f"❌ Hata: {e}")
 
 # ==================== STOK ====================
 @dp.message_handler(commands=['stok'])
@@ -461,6 +519,10 @@ async def sil_stok(message: types.Message):
                        f"📊 Miktar: {silinecek_malzeme.get('Kalan Miktar')} {silinecek_malzeme.get('Birim')}\n\n"
                        f"Bu işlem GERİ DÖNÜŞÜMSÜZDÜR!\n\n"
                        f"30 saniye içinde `/evet` yazın.")
+    await asyncio.sleep(30)
+    if silinecek_malzeme:
+        silinecek_malzeme = None
+        await message.reply("⏰ Silme iptal edildi.")
 
 @dp.message_handler(commands=['evet'])
 async def evet_sil(message: types.Message):
@@ -602,8 +664,7 @@ async def ph_sil(message: types.Message):
     param = message.get_args()
     if not param:
         await message.reply("Örnek:\n/ph_sil 1 - Son kaydı sil\n/ph_sil 1 hepsi - Tüm kayıtları sil\n/ph_sil 1 19-05-2026 - Tarihli kaydı sil")
-        return
-    
+        return    
     parcalar = param.split()
     teneke_no = parcalar[0]
     
@@ -631,8 +692,6 @@ async def ph_sil(message: types.Message):
         if len(parcalar) > 1 and parcalar[1].lower() == 'hepsi':
             silinecek_ph_kayitlari = teneke_kayitlari
             await message.reply(f"⚠️ **Teneke {teneke_no} için TÜM pH kayıtları** silinecek ({len(teneke_kayitlari)} kayıt).\n\nBu işlem GERİ DÖNÜŞÜMSÜZDÜR!\n\n30 saniye içinde `/ph_evet` yazın.")
-            
-            import asyncio
             await asyncio.sleep(30)
             if silinecek_ph_kayitlari == teneke_kayitlari:
                 silinecek_ph_kayitlari = None
@@ -784,8 +843,6 @@ async def gecmis_sil(message: types.Message):
         if param.lower() == 'hepsi':
             silinecek_gecmis_hepsi = True
             await message.reply(f"⚠️ **TÜM geçmiş kayıtları** silinecek ({len(veriler)} kayıt).\n\nBu işlem GERİ DÖNÜŞÜMSÜZDÜR!\n\n30 saniye içinde `/gecmis_evet` yazın.")
-            
-            import asyncio
             await asyncio.sleep(30)
             if silinecek_gecmis_hepsi:
                 silinecek_gecmis_hepsi = None
@@ -801,8 +858,6 @@ async def gecmis_sil(message: types.Message):
             idx = kayit_id - 1
             silinecek_gecmis_id = (idx, veriler[idx])
             await message.reply(f"⚠️ **ID: {kayit_id}** kaydı silinecek:\n\n📅 {veriler[idx][0]} - {veriler[idx][1]}\n   {veriler[idx][2][:200]}\n\nBu işlem GERİ DÖNÜŞÜMSÜZDÜR!\n\n30 saniye içinde `/gecmis_evet` yazın.")
-            
-            import asyncio
             await asyncio.sleep(30)
             if silinecek_gecmis_id == (idx, veriler[idx]):
                 silinecek_gecmis_id = None
