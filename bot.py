@@ -4,6 +4,7 @@ import csv
 import io
 import zipfile
 import asyncio
+import threading
 from datetime import datetime
 from aiogram import Bot, Dispatcher, executor, types
 
@@ -17,8 +18,11 @@ silinecek_gecmis_id = None
 silinecek_gecmis_hepsi = None
 silinecek_kayit_id = None
 silinecek_kayit_hepsi = None
-stok_uyarilari = {}  # {malzeme_adi: {'esik': 100, 'birim': 'gr'}}
+stok_uyarilari = {}
 stok_uyari_temizlik_onay = False
+
+# Telegram kullanıcı ID (otomatik hatırlatma için)
+CHAT_ID = 1443295480
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=API_TOKEN)
@@ -106,6 +110,52 @@ def stok_uyari_kontrol(malzeme_adi, kalan_miktar, birim):
                 return True, veri['esik'], veri['birim']
     return False, None, None
 
+# ==================== OTOMATİK HATIRLATMA ZAMANLAYICISI ====================
+async def hatirlatma_zamanlayici():
+    """Her dakika kontrol eder, vakti gelen hatırlatmaları gönderir"""
+    while True:
+        try:
+            with open('reminders.csv', 'r', encoding='utf-8-sig') as f:
+                reader = csv.reader(f)
+                satirlar = list(reader)
+            
+            if len(satirlar) <= 1:
+                await asyncio.sleep(60)
+                continue
+            
+            simdi = datetime.now()
+            simdi_tarih = simdi.strftime("%d-%m-%Y")
+            simdi_saat = simdi.strftime("%H:%M")
+            
+            yeni_satirlar = [satirlar[0]]
+            mesajlar = []
+            
+            for row in satirlar[1:]:
+                if len(row) >= 4 and row[3] == "bekliyor":
+                    if row[0] == simdi_tarih and row[1] == simdi_saat:
+                        mesajlar.append(f"⏰ **HATIRLATMA!**\n\n📅 {row[0]} {row[1]}\n📝 {row[2]}\n\n🌿 Bugün yapmayı unutma!")
+                        continue
+                    else:
+                        yeni_satirlar.append(row)
+                else:
+                    yeni_satirlar.append(row)
+            
+            for mesaj in mesajlar:
+                try:
+                    await bot.send_message(chat_id=CHAT_ID, text=mesaj)
+                except:
+                    pass
+            
+            with open('reminders.csv', 'w', encoding='utf-8-sig', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerows(yeni_satirlar)
+            
+            await asyncio.sleep(60)
+            
+        except Exception as e:
+            print(f"Zamanlayıcı hatası: {e}")
+            await asyncio.sleep(60)
+
 @dp.message_handler(commands=['start'])
 async def start(message: types.Message):
     await message.answer("🌿 **Yasemin Asistan** hazır!\n\n"
@@ -137,7 +187,8 @@ async def start(message: types.Message):
                          "/hatirlatmalar - Bekleyen hatırlatmalar (ID ile)\n"
                          "/hatirlat_sil 1 - Hatırlatma sil\n"
                          "/yedekle - Tüm CSV'leri yedekle\n"
-                         "/test - Bot testi")
+                         "/test - Bot testi\n\n"
+                         "⏰ **Otomatik hatırlatma aktif!** Vakti gelen hatırlatmalar otomatik mesaj atar.")
 
 @dp.message_handler(commands=['test'])
 async def test(message: types.Message):
@@ -1163,5 +1214,9 @@ async def gecmis_evet(message: types.Message):
         silinecek_gecmis_id = None
         silinecek_gecmis_hepsi = None
 
+# ==================== BAŞLAT ====================
 if __name__ == '__main__':
+    # Zamanlayıcıyı arka planda başlat
+    loop = asyncio.new_event_loop()
+    threading.Thread(target=lambda: loop.run_until_complete(hatirlatma_zamanlayici()), daemon=True).start()
     executor.start_polling(dp, skip_updates=True)
