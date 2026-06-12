@@ -17,6 +17,7 @@ silinecek_gecmis_id = None
 silinecek_gecmis_hepsi = None
 silinecek_kayit_id = None
 silinecek_kayit_hepsi = None
+stok_uyarilari = {}  # {malzeme_adi: esik_miktar}
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=API_TOKEN)
@@ -97,6 +98,14 @@ def hatirlatma_ekle(tarih, saat, islem):
         print(f"Hatırlatma ekleme hatası: {e}")
         return False
 
+def stok_uyari_kontrol(malzeme_adi, kalan_miktar, birim):
+    """Stok uyarısı kontrolü"""
+    for uyarilanan_malzeme, esik in stok_uyarilari.items():
+        if uyarilanan_malzeme.lower() in malzeme_adi.lower():
+            if kalan_miktar <= esik:
+                return True, esik
+    return False, None
+
 @dp.message_handler(commands=['start'])
 async def start(message: types.Message):
     await message.answer("🌿 **Yasemin Asistan** hazır!\n\n"
@@ -119,6 +128,9 @@ async def start(message: types.Message):
                          "/gecmis 14-05-2026 - Tarihli işlemler\n"
                          "/gecmis_sil 5 - ID ile işlem sil (onay için /gecmis_evet)\n"
                          "/rapor_aylik 05-2026 - Aylık rapor\n"
+                         "/stok_uyari NPK 100 - Stok uyarısı ekle\n"
+                         "/stok_uyari_sil NPK - Stok uyarısı sil\n"
+                         "/stok_uyari_liste - Stok uyarılarını listele\n"
                          "/hatirlat 30-07-2026 10:00 Sula - Hatırlatma ekle\n"
                          "/hatirlatmalar - Bekleyen hatırlatmalar (ID ile)\n"
                          "/hatirlat_sil 1 - Hatırlatma sil\n"
@@ -143,6 +155,53 @@ async def yedekle(message: types.Message):
     zip_buffer.seek(0)
     await message.reply_document(document=('yasemin_yedek.zip', zip_buffer), caption="📦 Yedek dosyaları")
 
+# ==================== STOK UYARISI ====================
+@dp.message_handler(commands=['stok_uyari'])
+async def stok_uyari_ekle(message: types.Message):
+    param = message.get_args()
+    if not param:
+        await message.reply("Örnek: /stok_uyari NPK 100\n\n/stok_uyari_sil NPK ile kaldırabilirsin.")
+        return
+    
+    parcalar = param.split()
+    if len(parcalar) < 2:
+        await message.reply("Örnek: /stok_uyari NPK 100")
+        return
+    
+    malzeme = parcalar[0]
+    try:
+        esik = float(parcalar[1])
+    except:
+        await message.reply("Eşik değeri sayı olmalı. Örnek: /stok_uyari NPK 100")
+        return
+    
+    stok_uyarilari[malzeme] = esik
+    await message.reply(f"✅ Stok uyarısı eklendi:\n📦 {malzeme} → {esik} gr altında uyarı verilecek.")
+
+@dp.message_handler(commands=['stok_uyari_sil'])
+async def stok_uyari_sil(message: types.Message):
+    param = message.get_args()
+    if not param:
+        await message.reply("Örnek: /stok_uyari_sil NPK")
+        return
+    
+    if param in stok_uyarilari:
+        del stok_uyarilari[param]
+        await message.reply(f"✅ {param} için stok uyarısı kaldırıldı.")
+    else:
+        await message.reply(f"❌ {param} için stok uyarısı bulunamadı.")
+
+@dp.message_handler(commands=['stok_uyari_liste'])
+async def stok_uyari_liste(message: types.Message):
+    if not stok_uyarilari:
+        await message.reply("📋 Aktif stok uyarısı yok.\n\n/stok_uyari NPK 100 ile ekleyebilirsin.")
+        return
+    
+    mesaj = "📋 **AKTİF STOK UYARILARI**\n\n"
+    for malzeme, esik in stok_uyarilari.items():
+        mesaj += f"• {malzeme}: {esik} gr altında uyarı\n"
+    await message.reply(mesaj)
+
 # ==================== AYLIK RAPOR ====================
 @dp.message_handler(commands=['rapor_aylik'])
 async def rapor_aylik(message: types.Message):
@@ -162,17 +221,15 @@ async def rapor_aylik(message: types.Message):
         
         veriler = satirlar[1:]
         
-        # Format dönüştürme: 05-2026 -> 2026-05 (YYYY-AA)
+        # Format dönüştürme
         hedef_ay = ay_param
         if '-' in ay_param:
             parcalar = ay_param.split('-')
             if len(parcalar) == 2 and len(parcalar[0]) == 2:
-                # 05-2026 formatında
-                ay_kontrol1 = f"{parcalar[1]}-{parcalar[0]}"  # 2026-05
-                ay_kontrol2 = f"-{parcalar[1]}-{parcalar[0]}"  # -2026-05
-                ay_kontrol3 = f"{parcalar[0]}-{parcalar[1]}"  # 05-2026
+                ay_kontrol1 = f"{parcalar[1]}-{parcalar[0]}"
+                ay_kontrol2 = f"-{parcalar[1]}-{parcalar[0]}"
+                ay_kontrol3 = f"{parcalar[0]}-{parcalar[1]}"
             elif len(parcalar) == 2 and len(parcalar[0]) == 4:
-                # 2026-05 formatında
                 ay_kontrol1 = ay_param
                 ay_kontrol2 = f"-{ay_param}"
                 ay_kontrol3 = f"{parcalar[1]}-{parcalar[0]}"
@@ -183,7 +240,6 @@ async def rapor_aylik(message: types.Message):
             await message.reply("Geçersiz format. Örnek: /rapor_aylik 05-2026")
             return
         
-        # Ay kayıtlarını bul (her iki formatı da dene)
         ay_kayitlari = []
         for row in veriler:
             if len(row) >= 1:
@@ -194,7 +250,6 @@ async def rapor_aylik(message: types.Message):
             await message.reply(f"❌ {ay_param} ayında işlem bulunamadı.")
             return
         
-        # İstatistikler
         toplam_islem = len(ay_kayitlari)
         islem_turleri = {}
         malzeme_kullanimlari = {}
@@ -202,11 +257,9 @@ async def rapor_aylik(message: types.Message):
         miktar_sayac = 0
         
         for row in ay_kayitlari:
-            # İşlem türü
             tur = row[1] if len(row) > 1 else "Bilinmiyor"
             islem_turleri[tur] = islem_turleri.get(tur, 0) + 1
             
-            # Malzeme miktarı
             if len(row) > 2 and row[2] != "-":
                 parcalar = row[2].split()
                 if len(parcalar) >= 3:
@@ -219,11 +272,9 @@ async def rapor_aylik(message: types.Message):
                     except:
                         pass
         
-        # En çok kullanılan malzeme
         en_cok_malzeme = max(malzeme_kullanimlari.items(), key=lambda x: x[1])[0] if malzeme_kullanimlari else "Yok"
         ortalama_miktar = toplam_miktar / miktar_sayac if miktar_sayac > 0 else 0
         
-        # Rapor oluştur
         ay_adi = ay_param
         rapor = f"📊 **{ay_adi} AYLIK RAPORU**\n\n"
         rapor += f"📝 Toplam işlem: {toplam_islem}\n"
@@ -387,7 +438,12 @@ async def kaydet(message: types.Message):
                 
                 history_ekle("Kullanım", malzeme_adi, miktar, birim)
                 
-                await message.reply(f"✅ {miktar:.1f} {birim} {malzeme_adi} kullanıldı.\n📊 Kalan: {yeni_kalan:.1f} {birim}")
+                # Stok uyarısı kontrolü
+                uyari_var, esik = stok_uyari_kontrol(malzeme_adi, yeni_kalan, birim)
+                if uyari_var:
+                    await message.reply(f"✅ {miktar:.1f} {birim} {malzeme_adi} kullanıldı.\n📊 Kalan: {yeni_kalan:.1f} {birim}\n\n⚠️ **STOK UYARISI!** {malzeme_adi} {esik} gr altına düştü!")
+                else:
+                    await message.reply(f"✅ {miktar:.1f} {birim} {malzeme_adi} kullanıldı.\n📊 Kalan: {yeni_kalan:.1f} {birim}")
                 return
             else:
                 await message.reply(f"❌ Yetersiz stok! Kalan: {kalan:.1f} {birim}\n\nİşlem yine de kaydedildi.")
