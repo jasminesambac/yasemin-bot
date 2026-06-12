@@ -82,7 +82,6 @@ def malzeme_bul(aranan, stoklar):
             eslesenler.append(item)
     return eslesenler
 
-# ==================== HATIRLATICI FONKSİYONLARI ====================
 def hatirlatma_ekle(tarih, saat, islem):
     try:
         with open('reminders.csv', 'a', encoding='utf-8-sig', newline='') as f:
@@ -112,7 +111,7 @@ async def start(message: types.Message):
                          "/gecmis 14-05-2026 - Tarihli işlemler\n"
                          "/gecmis_sil 5 - ID ile işlem sil (onay için /gecmis_evet)\n"
                          "/hatirlat 30-07-2026 10:00 Sula - Hatırlatma ekle\n"
-                         "/hatirlatmalar - Bekleyen hatırlatmalar\n"
+                         "/hatirlatmalar - Bekleyen hatırlatmalar (ID ile)\n"
                          "/hatirlat_sil 1 - Hatırlatma sil\n"
                          "/test - Bot testi")
 
@@ -135,7 +134,7 @@ async def hatirlat(message: types.Message):
     
     tarih, saat, islem = parcalar
     if hatirlatma_ekle(tarih, saat, islem):
-        await message.reply(f"✅ Hatırlatma eklendi!\n📅 {tarih} {saat}\n📝 {islem}\n\n⚠️ Not: Otomatik mesaj için zamanlayıcı henüz aktif değil.")
+        await message.reply(f"✅ Hatırlatma eklendi!\n📅 {tarih} {saat}\n📝 {islem}")
     else:
         await message.reply("❌ Hata.")
 
@@ -159,7 +158,7 @@ async def list_hatirlatmalar(message: types.Message):
             await message.reply("✅ Bekleyen hatırlatma yok.")
             return
         
-        mesaj = "📅 **BEKLEYEN HATIRLATMALAR**\n\n"
+        mesaj = "📅 **BEKLEYEN HATIRLATMALAR (ID ile)**\n\n"
         for i, row in bekleyenler:
             mesaj += f"**ID: {i}** | {row[0]} {row[1]} - {row[2]}\n"
         await message.reply(mesaj[:4000])
