@@ -6,9 +6,11 @@ import zipfile
 import asyncio
 import requests
 from datetime import datetime
+from openai import OpenAI
 from aiogram import Bot, Dispatcher, executor, types
 
 API_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+AGNES_API_KEY = os.getenv("AGNES_API_KEY")
 
 # Geçici hafızalar
 son_kayit_geri_al = None
@@ -20,6 +22,13 @@ silinecek_kayit_id = None
 silinecek_kayit_hepsi = None
 stok_uyarilari = {}
 stok_uyari_temizlik_onay = False
+baglam_metinleri = {}
+
+# Agnes AI istemcisi
+client = OpenAI(
+    base_url="https://apihub.agnes-ai.com/v1",
+    api_key=AGNES_API_KEY
+)
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=API_TOKEN)
@@ -35,6 +44,33 @@ def mesaj_parcala(metin, uzunluk=4000):
     for i in range(0, len(metin), uzunluk):
         parcalar.append(metin[i:i+uzunluk])
     return parcalar
+
+def baglam_guncelle(user_id, mesaj, cevap=""):
+    if user_id not in baglam_metinleri:
+        baglam_metinleri[user_id] = ""
+    baglam_metinleri[user_id] += f"Kullanıcı: {mesaj}\n"
+    if cevap:
+        baglam_metinleri[user_id] += f"Asistan: {cevap}\n"
+    satirlar = baglam_metinleri[user_id].split('\n')
+    if len(satirlar) > 50:
+        baglam_metinleri[user_id] = '\n'.join(satirlar[-50:])
+
+def ask_agnes(question, user_id=None):
+    try:
+        messages = []
+        if user_id and user_id in baglam_metinleri and baglam_metinleri[user_id]:
+            baglam = baglam_metinleri[user_id][-2000:]
+            messages.append({"role": "system", "content": f"Önceki konuşma geçmişi:\n{baglam}"})
+        messages.append({"role": "user", "content": question})
+        response = client.chat.completions.create(
+            model="agnes-2.0-flash",
+            messages=messages,
+            max_tokens=3000
+        )
+        cevap = response.choices[0].message.content
+        return cevap
+    except Exception as e:
+        return f"Agnes hatası: {str(e)[:100]}"
 
 def stok_oku():
     stok_listesi = []
@@ -115,16 +151,62 @@ def hava_durumu(sehir="Istanbul"):
     except:
         return "Hava durumu alınamadı."
 
+@dp.message_handler(commands=['sor'])
+async def sor(message: types.Message):
+    soru = message.get_args()
+    if not soru:
+        await message.reply("Bir soru yaz: /sor [sorunuz]")
+        return
+    user_id = str(message.from_user.id)
+    msg = await message.reply("🤔 Agnes düşünüyor...")
+    cevap = ask_agnes(soru, user_id)
+    baglam_guncelle(user_id, soru, cevap)
+    for parca in mesaj_parcala(cevap):
+        await bot.send_message(chat_id=message.chat.id, text=f"🤖 **Agnes AI:**\n\n{parca}")
+
 @dp.message_handler(commands=['start'])
 async def start(message: types.Message):
     await message.answer("🌿 **Yasemin Asistan** hazır!\n\n"
-                         "📦 **STOK:**\n/stok - Envanter listesi\n/stok lena - Malzeme sorgula\n/kaydet 5 gr NPK - Stoktan düş\n/kaydet Sera kuruldu - İşlem kaydet\n/kaydet_geri_al - Son işlemi geri al\n/kaydet_geri_al 5 - ID ile geri al\n/ekle NPK;1000;gr;Gübre - Yeni malzeme ekle\n/sil Test - Malzeme sil\n\n"
-                         "🔬 **pH:**\n/ph 1 - Son pH\n/ph 1 hepsi - Tüm pH\n/ph_tumu - Tüm tenekelerin tüm pH\n/ph_ekle 1 6.5 - pH ekle\n/ph_sil 1 - Son pH kaydını sil\n\n"
-                         "📜 **GEÇMİŞ:**\n/gecmis - Son 10 işlem\n/gecmis hepsi - Tüm geçmiş\n/gecmis 14-05-2026 - Tarihli işlemler\n/gecmis_sil 5 - İşlem sil\n\n"
-                         "📊 **RAPOR:**\n/rapor_aylik 05-2026 - Aylık rapor\n/rapor_gunluk - Günlük rapor\n/istatistik - Genel istatistik\n/grafik NPK - Stok grafiği\n\n"
-                         "⚠️ **UYARI:**\n/stok_uyari \"NPK\" 100 gr - Stok uyarısı ekle\n/stok_uyari_sil NPK - Uyarı sil\n/stok_uyari_liste - Uyarıları listele\n/stok_uyari_temizle - Tüm uyarıları sil\n\n"
-                         "⏰ **HATIRLATMA:**\n/hatirlat 30-07-2026 10:00 Sula - Hatırlatma ekle\n/hatirlatmalar - Bekleyen hatırlatmalar\n/hatirlat_sil 1 - Hatırlatma sil\n\n"
-                         "🌤️ **DİĞER:**\n/hava İstanbul - Hava durumu\n/toplu_kaydet - Toplu işlem\n/yedekle - Yedekle\n/test - Bot testi")
+                         "📦 **STOK KOMUTLARI:**\n"
+                         "/stok - Envanter listesi\n"
+                         "/stok [malzeme] - Malzeme sorgula (ör: /stok NPK)\n"
+                         "/kaydet [miktar] [birim] [malzeme] - Stoktan düş (ör: /kaydet 5 gr NPK)\n"
+                         "/kaydet [işlem] - Not kaydet (ör: /kaydet Sera kuruldu)\n"
+                         "/kaydet_geri_al - Son işlemi geri al\n"
+                         "/kaydet_geri_al [id] - ID ile geri al\n"
+                         "/ekle [ad];[miktar];[birim];[görev] - Yeni malzeme ekle\n"
+                         "/sil [malzeme] - Malzeme sil (onay: /evet)\n\n"
+                         "🔬 **pH KOMUTLARI:**\n"
+                         "/ph [teneke] - Son pH (ör: /ph 1)\n"
+                         "/ph [teneke] hepsi - Tüm pH (ör: /ph 1 hepsi)\n"
+                         "/ph_tumu - Tüm tenekelerin tüm pH\n"
+                         "/ph_ekle [teneke] [ph] - pH ekle (ör: /ph_ekle 1 6.5)\n"
+                         "/ph_sil [teneke] - Son pH kaydını sil\n\n"
+                         "📜 **GEÇMİŞ KOMUTLARI:**\n"
+                         "/gecmis - Son 10 işlem\n"
+                         "/gecmis hepsi - Tüm geçmiş\n"
+                         "/gecmis [tarih] - Tarihli işlemler (ör: /gecmis 14-05-2026)\n"
+                         "/gecmis_sil [id] - İşlem sil (onay: /gecmis_evet)\n\n"
+                         "📊 **RAPOR KOMUTLARI:**\n"
+                         "/rapor_aylik [aa-yyyy] - Aylık rapor (ör: /rapor_aylik 05-2026)\n"
+                         "/rapor_gunluk - Günlük rapor\n"
+                         "/istatistik - Genel istatistik\n"
+                         "/grafik [malzeme] - Stok grafiği (ör: /grafik NPK)\n\n"
+                         "⚠️ **UYARI KOMUTLARI:**\n"
+                         "/stok_uyari [malzeme] [esik] [birim] - Stok uyarısı ekle (ör: /stok_uyari NPK 100 gr)\n"
+                         "/stok_uyari_sil [malzeme] - Uyarı sil\n"
+                         "/stok_uyari_liste - Uyarıları listele\n"
+                         "/stok_uyari_temizle - Tüm uyarıları sil (onay: /stok_uyari_evet)\n\n"
+                         "⏰ **HATIRLATMA KOMUTLARI:**\n"
+                         "/hatirlat [gun-ay-yil] [saat] [işlem] - Hatırlatma ekle (ör: /hatirlat 30-07-2026 10:00 Sula)\n"
+                         "/hatirlatmalar - Bekleyen hatırlatmalar\n"
+                         "/hatirlat_sil [id] - Hatırlatma sil\n\n"
+                         "🤖 **YAPAY ZEKA:**\n"
+                         "/sor [soru] - Agnes AI'ya sor\n\n"
+                         "🌤️ **DİĞER:**\n"
+                         "/hava [şehir] - Hava durumu (ör: /hava İstanbul)\n"
+                         "/yedekle - Tüm CSV'leri yedekle\n"
+                         "/test - Bot testi")
 
 @dp.message_handler(commands=['test'])
 async def test(message: types.Message):
@@ -143,7 +225,6 @@ async def hava(message: types.Message):
 @dp.message_handler(commands=['toplu_kaydet'])
 async def toplu_kaydet(message: types.Message):
     await message.reply("📝 Toplu kayıt için bir txt dosyası gönderin.\n\nDosya formatı:\nher satırda bir işlem\nÖrnek:\n5 gr NPK\n10 ml Lena Tonik\nSera kuruldu")
-    # Bu kısım dosya alma ile genişletilebilir
 
 # ==================== İSTATİSTİK ====================
 @dp.message_handler(commands=['istatistik'])
@@ -221,7 +302,6 @@ async def grafik(message: types.Message):
             await message.reply(f"❌ '{param}' için geçmiş kayıt bulunamadı.")
             return
         
-        # Son 10 kaydı göster
         sonlar = kayitlar[-10:][::-1]
         grafik = f"📊 **'{param.upper()}' STOK GRAFİĞİ (Son 10 kullanım)**\n\n"
         for row in sonlar:
