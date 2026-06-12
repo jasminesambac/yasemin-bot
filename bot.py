@@ -118,6 +118,7 @@ async def start(message: types.Message):
                          "/gecmis hepsi - Tüm geçmiş (ID ile)\n"
                          "/gecmis 14-05-2026 - Tarihli işlemler\n"
                          "/gecmis_sil 5 - ID ile işlem sil (onay için /gecmis_evet)\n"
+                         "/rapor_aylik 05-2026 - Aylık rapor\n"
                          "/hatirlat 30-07-2026 10:00 Sula - Hatırlatma ekle\n"
                          "/hatirlatmalar - Bekleyen hatırlatmalar (ID ile)\n"
                          "/hatirlat_sil 1 - Hatırlatma sil\n"
@@ -141,6 +142,101 @@ async def yedekle(message: types.Message):
                 pass
     zip_buffer.seek(0)
     await message.reply_document(document=('yasemin_yedek.zip', zip_buffer), caption="📦 Yedek dosyaları")
+
+# ==================== AYLIK RAPOR ====================
+@dp.message_handler(commands=['rapor_aylik'])
+async def rapor_aylik(message: types.Message):
+    ay_param = message.get_args()
+    if not ay_param:
+        await message.reply("Örnek: /rapor_aylik 05-2026\n\nAy formatı: AA-YYYY (örnek: 05-2026)")
+        return
+    
+    try:
+        with open('history.csv', 'r', encoding='utf-8-sig') as f:
+            reader = csv.reader(f)
+            satirlar = list(reader)
+        
+        if len(satirlar) <= 1:
+            await message.reply("❌ Henüz hiç kayıt yok.")
+            return
+        
+        veriler = satirlar[1:]
+        
+        # Format dönüştürme: 05-2026 -> 2026-05 (YYYY-AA)
+        hedef_ay = ay_param
+        if '-' in ay_param:
+            parcalar = ay_param.split('-')
+            if len(parcalar) == 2 and len(parcalar[0]) == 2:
+                # 05-2026 formatında
+                ay_kontrol1 = f"{parcalar[1]}-{parcalar[0]}"  # 2026-05
+                ay_kontrol2 = f"-{parcalar[1]}-{parcalar[0]}"  # -2026-05
+                ay_kontrol3 = f"{parcalar[0]}-{parcalar[1]}"  # 05-2026
+            elif len(parcalar) == 2 and len(parcalar[0]) == 4:
+                # 2026-05 formatında
+                ay_kontrol1 = ay_param
+                ay_kontrol2 = f"-{ay_param}"
+                ay_kontrol3 = f"{parcalar[1]}-{parcalar[0]}"
+            else:
+                await message.reply("Geçersiz format. Örnek: /rapor_aylik 05-2026")
+                return
+        else:
+            await message.reply("Geçersiz format. Örnek: /rapor_aylik 05-2026")
+            return
+        
+        # Ay kayıtlarını bul (her iki formatı da dene)
+        ay_kayitlari = []
+        for row in veriler:
+            if len(row) >= 1:
+                if ay_kontrol1 in row[0] or ay_kontrol2 in row[0] or ay_kontrol3 in row[0]:
+                    ay_kayitlari.append(row)
+        
+        if not ay_kayitlari:
+            await message.reply(f"❌ {ay_param} ayında işlem bulunamadı.")
+            return
+        
+        # İstatistikler
+        toplam_islem = len(ay_kayitlari)
+        islem_turleri = {}
+        malzeme_kullanimlari = {}
+        toplam_miktar = 0
+        miktar_sayac = 0
+        
+        for row in ay_kayitlari:
+            # İşlem türü
+            tur = row[1] if len(row) > 1 else "Bilinmiyor"
+            islem_turleri[tur] = islem_turleri.get(tur, 0) + 1
+            
+            # Malzeme miktarı
+            if len(row) > 2 and row[2] != "-":
+                parcalar = row[2].split()
+                if len(parcalar) >= 3:
+                    try:
+                        miktar = float(parcalar[0].replace(',', '.'))
+                        malzeme = " ".join(parcalar[2:])
+                        toplam_miktar += miktar
+                        miktar_sayac += 1
+                        malzeme_kullanimlari[malzeme] = malzeme_kullanimlari.get(malzeme, 0) + 1
+                    except:
+                        pass
+        
+        # En çok kullanılan malzeme
+        en_cok_malzeme = max(malzeme_kullanimlari.items(), key=lambda x: x[1])[0] if malzeme_kullanimlari else "Yok"
+        ortalama_miktar = toplam_miktar / miktar_sayac if miktar_sayac > 0 else 0
+        
+        # Rapor oluştur
+        ay_adi = ay_param
+        rapor = f"📊 **{ay_adi} AYLIK RAPORU**\n\n"
+        rapor += f"📝 Toplam işlem: {toplam_islem}\n"
+        rapor += f"🔧 En çok kullanılan malzeme: {en_cok_malzeme}\n"
+        rapor += f"📦 Ortalama kullanım: {ortalama_miktar:.1f} gr\n\n"
+        rapor += f"📋 İşlem türleri:\n"
+        for tur, sayi in sorted(islem_turleri.items(), key=lambda x: x[1], reverse=True):
+            rapor += f"   • {tur}: {sayi} kez\n"
+        
+        await message.reply(rapor)
+        
+    except Exception as e:
+        await message.reply(f"❌ Rapor alınamadı: {e}")
 
 # ==================== HATIRLATMA ====================
 @dp.message_handler(commands=['hatirlat'])
@@ -367,7 +463,7 @@ async def kaydet_geri_al(message: types.Message):
         # ID yoksa son işlemi sil (onaylı)
         son_islem = veriler[-1]
         kayit_id = len(veriler)
-        silinecek_kayit_id = (len(vereler)-1, son_islem, kayit_id)
+        silinecek_kayit_id = (len(veriler)-1, son_islem, kayit_id)
         
         await message.reply(f"⚠️ **DİKKAT!**\n\n"
                            f"SON işlem silinecek:\n"
