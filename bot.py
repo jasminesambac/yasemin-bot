@@ -100,6 +100,7 @@ async def start(message: types.Message):
                          "/stok - Envanter listesi\n"
                          "/stok lena - Malzeme sorgula\n"
                          "/kaydet 5 gr NPK - Stoktan düş\n"
+                         "/kaydet Sera kuruldu - İşlem kaydet (stok etkilemez)\n"
                          "/kaydet_geri_al - Son işlemi geri al\n"
                          "/ekle NPK;1000;gr;Gübre - Yeni malzeme ekle\n"
                          "/sil Test - Malzeme sil (onay için /evet)\n"
@@ -212,6 +213,124 @@ async def hatirlat_sil(message: types.Message):
     except:
         await message.reply("❌ Hata oluştu.")
 
+# ==================== KAYDET ====================
+@dp.message_handler(commands=['kaydet'])
+async def kaydet(message: types.Message):
+    global son_kayit_geri_al
+    islem = message.get_args()
+    if not islem:
+        await message.reply("Örnek: /kaydet 5 gr NPK veya /kaydet Sera kuruldu")
+        return
+    
+    # Sayı ile başlıyorsa (örn: 5 gr NPK) stok işlemi dene
+    parcalar = islem.split()
+    if len(parcalar) >= 3 and parcalar[0].replace('.', '').replace(',', '').isdigit():
+        try:
+            miktar = float(parcalar[0].replace(',', '.'))
+            birim = parcalar[1]
+            malzeme_aranan = " ".join(parcalar[2:])
+        except:
+            # Sayı okunamadı, sadece history'ye kaydet
+            history_ekle("İşlem", islem, "-", "-")
+            await message.reply(f"✅ İşlem kaydedildi:\n📝 {islem}")
+            return
+        
+        stoklar = stok_oku()
+        eslesenler = malzeme_bul(malzeme_aranan, stoklar)
+        
+        if not eslesenler:
+            # Stokta bulunamadı, sadece history'ye kaydet
+            history_ekle("İşlem", islem, "-", "-")
+            await message.reply(f"✅ İşlem kaydedildi (stokta bulunamadı):\n📝 {islem}")
+            return
+        
+        if len(eslesenler) > 1:
+            liste = "\n".join([f"• {item.get('Malzeme / Alet')}" for item in eslesenler[:5]])
+            await message.reply(f"⚠️ '{malzeme_aranan}' için birden fazla malzeme bulundu:\n\n{liste}\n\nLütfen tam adını yazın.\n\nİşlem yine de kaydedildi.")
+            history_ekle("İşlem", islem, "-", "-")
+            return
+        
+        item = eslesenler[0]
+        malzeme_adi = item.get('Malzeme / Alet')
+        
+        try:
+            kalan_str = str(item['Kalan Miktar']).replace(',', '.').strip()
+            if kalan_str == 'Stok bol':
+                item['Kalan Miktar'] = 'Stok bol'
+                stok_kaydet(stoklar)
+                
+                son_kayit_geri_al = {
+                    'malzeme': malzeme_adi,
+                    'eski_kalan': 'Stok bol',
+                    'kullanilan': miktar,
+                    'birim': birim
+                }
+                
+                history_ekle("Kullanım", malzeme_adi, miktar, birim)
+                await message.reply(f"✅ {miktar:.1f} {birim} {malzeme_adi} kullanıldı. (Stok bol, tükenmez)")
+                return
+            
+            kalan = float(kalan_str)
+            if kalan >= miktar:
+                yeni_kalan = kalan - miktar
+                eski_kalan = kalan
+                item['Kalan Miktar'] = str(yeni_kalan).replace('.', ',')
+                kullanilan = float(str(item.get('Kullanılan', '0')).replace(',', '.'))
+                item['Kullanılan'] = str(kullanilan + miktar).replace('.', ',')
+                stok_kaydet(stoklar)
+                
+                son_kayit_geri_al = {
+                    'malzeme': malzeme_adi,
+                    'eski_kalan': eski_kalan,
+                    'kullanilan': miktar,
+                    'birim': birim
+                }
+                
+                history_ekle("Kullanım", malzeme_adi, miktar, birim)
+                
+                await message.reply(f"✅ {miktar:.1f} {birim} {malzeme_adi} kullanıldı.\n📊 Kalan: {yeni_kalan:.1f} {birim}")
+                return
+            else:
+                await message.reply(f"❌ Yetersiz stok! Kalan: {kalan:.1f} {birim}\n\nİşlem yine de kaydedildi.")
+                history_ekle("İşlem", islem, "-", "-")
+                return
+        except Exception as e:
+            await message.reply(f"❌ Hata: {e}\n\nİşlem yine de kaydedildi.")
+            history_ekle("İşlem", islem, "-", "-")
+            return
+    
+    else:
+        # Sayı ile başlamıyorsa (Çit döşendi, Sera kuruldu, vb.)
+        history_ekle("İşlem", islem, "-", "-")
+        await message.reply(f"✅ İşlem kaydedildi:\n📝 {islem}")
+        return
+
+@dp.message_handler(commands=['kaydet_geri_al'])
+async def kaydet_geri_al(message: types.Message):
+    global son_kayit_geri_al
+    if not son_kayit_geri_al:
+        await message.reply("❌ Geri alınacak kayıt yok")
+        return
+    
+    stoklar = stok_oku()
+    for item in stoklar:
+        if son_kayit_geri_al['malzeme'].lower() in item.get('Malzeme / Alet', '').lower():
+            if son_kayit_geri_al['eski_kalan'] == 'Stok bol':
+                item['Kalan Miktar'] = 'Stok bol'
+            else:
+                item['Kalan Miktar'] = str(son_kayit_geri_al['eski_kalan']).replace('.', ',')
+            kullanilan = float(str(item.get('Kullanılan', '0')).replace(',', '.'))
+            item['Kullanılan'] = str(kullanilan - son_kayit_geri_al['kullanilan']).replace('.', ',')
+            stok_kaydet(stoklar)
+            
+            miktar = son_kayit_geri_al['kullanilan']
+            birim = son_kayit_geri_al['birim']
+            malzeme = son_kayit_geri_al['malzeme']
+            son_kayit_geri_al = None
+            await message.reply(f"✅ Geri alındı: {malzeme} +{miktar:.1f} {birim}")
+            return
+    await message.reply("❌ Malzeme bulunamadı")
+
 # ==================== STOK ====================
 @dp.message_handler(commands=['stok'])
 async def stok(message: types.Message):
@@ -265,115 +384,6 @@ async def stok(message: types.Message):
         for item in stoklar[:30]:
             mesaj += f"• {item.get('Malzeme / Alet')}: {item.get('Kalan Miktar')} {item.get('Birim')}\n"
         await message.reply(mesaj)
-
-# ==================== KAYDET ====================
-@dp.message_handler(commands=['kaydet'])
-async def kaydet(message: types.Message):
-    global son_kayit_geri_al
-    islem = message.get_args()
-    if not islem:
-        await message.reply("Örnek: /kaydet 5 gr NPK")
-        return
-    
-    parcalar = islem.split()
-    if len(parcalar) < 3:
-        await message.reply("Örnek: /kaydet 5 gr NPK")
-        return
-    
-    try:
-        miktar = float(parcalar[0])
-        birim = parcalar[1]
-        malzeme_aranan = " ".join(parcalar[2:])
-    except:
-        await message.reply("Hatalı format. Örnek: /kaydet 5 gr NPK")
-        return
-    
-    stoklar = stok_oku()
-    eslesenler = malzeme_bul(malzeme_aranan, stoklar)
-    
-    if not eslesenler:
-        await message.reply(f"❌ '{malzeme_aranan}' ile eşleşen malzeme bulunamadı.")
-        return
-    
-    if len(eslesenler) > 1:
-        liste = "\n".join([f"• {item.get('Malzeme / Alet')}" for item in eslesenler[:5]])
-        await message.reply(f"⚠️ '{malzeme_aranan}' için birden fazla malzeme bulundu:\n\n{liste}\n\nLütfen tam adını yazın.")
-        return
-    
-    item = eslesenler[0]
-    malzeme_adi = item.get('Malzeme / Alet')
-    
-    try:
-        kalan_str = str(item['Kalan Miktar']).replace(',', '.').strip()
-        if kalan_str == 'Stok bol':
-            yeni_kalan = 'Stok bol'
-            eski_kalan = 'Stok bol'
-            item['Kalan Miktar'] = yeni_kalan
-            stok_kaydet(stoklar)
-            
-            son_kayit_geri_al = {
-                'malzeme': malzeme_adi,
-                'eski_kalan': eski_kalan,
-                'kullanilan': miktar,
-                'birim': birim
-            }
-            
-            history_ekle("Kullanım", malzeme_adi, miktar, birim)
-            await message.reply(f"✅ {miktar:.1f} {birim} {malzeme_adi} kullanıldı. (Stok bol, tükenmez)")
-            return
-        
-        kalan = float(kalan_str)
-        if kalan >= miktar:
-            yeni_kalan = kalan - miktar
-            eski_kalan = kalan
-            item['Kalan Miktar'] = str(yeni_kalan).replace('.', ',')
-            kullanilan = float(str(item.get('Kullanılan', '0')).replace(',', '.'))
-            item['Kullanılan'] = str(kullanilan + miktar).replace('.', ',')
-            stok_kaydet(stoklar)
-            
-            son_kayit_geri_al = {
-                'malzeme': malzeme_adi,
-                'eski_kalan': eski_kalan,
-                'kullanilan': miktar,
-                'birim': birim
-            }
-            
-            history_ekle("Kullanım", malzeme_adi, miktar, birim)
-            
-            await message.reply(f"✅ {miktar:.1f} {birim} {malzeme_adi} kullanıldı.\n📊 Kalan: {yeni_kalan:.1f} {birim}")
-            return
-        else:
-            await message.reply(f"❌ Yetersiz stok! Kalan: {kalan:.1f} {birim}")
-            return
-    except Exception as e:
-        await message.reply(f"❌ Hata: {e}")
-        return
-
-@dp.message_handler(commands=['kaydet_geri_al'])
-async def kaydet_geri_al(message: types.Message):
-    global son_kayit_geri_al
-    if not son_kayit_geri_al:
-        await message.reply("❌ Geri alınacak kayıt yok")
-        return
-    
-    stoklar = stok_oku()
-    for item in stoklar:
-        if son_kayit_geri_al['malzeme'].lower() in item.get('Malzeme / Alet', '').lower():
-            if son_kayit_geri_al['eski_kalan'] == 'Stok bol':
-                item['Kalan Miktar'] = 'Stok bol'
-            else:
-                item['Kalan Miktar'] = str(son_kayit_geri_al['eski_kalan']).replace('.', ',')
-            kullanilan = float(str(item.get('Kullanılan', '0')).replace(',', '.'))
-            item['Kullanılan'] = str(kullanilan - son_kayit_geri_al['kullanilan']).replace('.', ',')
-            stok_kaydet(stoklar)
-            
-            miktar = son_kayit_geri_al['kullanilan']
-            birim = son_kayit_geri_al['birim']
-            malzeme = son_kayit_geri_al['malzeme']
-            son_kayit_geri_al = None
-            await message.reply(f"✅ Geri alındı: {malzeme} +{miktar:.1f} {birim}")
-            return
-    await message.reply("❌ Malzeme bulunamadı")
 
 # ==================== EKLE ====================
 @dp.message_handler(commands=['ekle'])
