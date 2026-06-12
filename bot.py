@@ -5,8 +5,6 @@ import io
 import zipfile
 import asyncio
 import requests
-import json
-import re
 from datetime import datetime
 from openai import OpenAI
 from aiogram import Bot, Dispatcher, executor, types
@@ -25,45 +23,6 @@ silinecek_kayit_hepsi = None
 stok_uyarilari = {}
 stok_uyari_temizlik_onay = False
 baglam_metinleri = {}
-
-# Türkçe gün isimleri
-gunler_tr = {
-    "Monday": "Pazartesi",
-    "Tuesday": "Salı",
-    "Wednesday": "Çarşamba",
-    "Thursday": "Perşembe",
-    "Friday": "Cuma",
-    "Saturday": "Cumartesi",
-    "Sunday": "Pazar"
-}
-
-# İngilizce -> Türkçe hava durumu çevirileri
-hava_ceviri = {
-    "Sunny": "☀️ Güneşli",
-    "Clear": "☀️ Açık",
-    "Partly cloudy": "⛅ Parçalı bulutlu",
-    "Cloudy": "☁️ Bulutlu",
-    "Overcast": "☁️ Kapalı",
-    "Rain": "🌧️ Yağmurlu",
-    "Light rain": "🌧️ Hafif yağmur",
-    "Heavy rain": "🌧️ Şiddetli yağmur",
-    "Shower": "🌦️ Sağanak yağmur",
-    "Thunderstorm": "⛈️ Gök gürültülü fırtına",
-    "Snow": "❄️ Karlı",
-    "Light snow": "❄️ Hafif kar",
-    "Fog": "🌫️ Sisli",
-    "Mist": "🌫️ Puslu",
-    "Windy": "💨 Rüzgarlı"
-}
-
-def hava_cevir(ingilizce_metin):
-    """Hava durumu metnini Türkçe'ye çevirir"""
-    sonuc = ingilizce_metin
-    for ing, tr in hava_ceviri.items():
-        if ing.lower() in ingilizce_metin.lower():
-            sonuc = ingilizce_metin.replace(ing, tr)
-            break
-    return sonuc
 
 # Agnes AI istemcisi
 client = OpenAI(
@@ -184,128 +143,85 @@ def stok_uyari_kontrol(malzeme_adi, kalan_miktar, birim):
                 return True, veri['esik'], veri['birim']
     return False, None, None
 
-# ==================== HAVA DURUMU (TÜRKÇE) ====================
+# ==================== HAVA DURUMU (DÜZELTİLMİŞ) ====================
 @dp.message_handler(commands=['hava'])
 async def hava(message: types.Message):
-    """Şu anki hava durumu - Türkçe"""
-    sehir = message.get_args()
-    if not sehir:
-        sehir = "Istanbul"
-    try:
-        url = f"https://wttr.in/{sehir}?format=%C+%t+%w+%h&m"
-        response = requests.get(url, timeout=10)
-        sonuc = response.text.strip()
-        # Hava durumunu Türkçe'ye çevir
-        for ing, tr in hava_ceviri.items():
-            if ing.lower() in sonuc.lower():
-                sonuc = sonuc.replace(ing, tr)
-                break
-        await message.reply(f"🌤️ **{sehir.upper()} - ŞU ANKİ HAVA**\n\n{sonuc}\n\n(°C, km/h)")
-    except:
-        await message.reply("❌ Hava durumu alınamadı.")
-
-@dp.message_handler(commands=['hava_gunluk'])
-async def hava_gunluk(message: types.Message):
-    """Bugün ve yarın detaylı - Türkçe"""
-    sehir = message.get_args()
-    if not sehir:
-        sehir = "Istanbul"
-    try:
-        url = f"https://wttr.in/{sehir}?format=%l:+%t+%w+%C+%h&0..1"
-        response = requests.get(url, timeout=10)
-        satirlar = response.text.strip().split('\n')
-        mesaj = f"📅 **{sehir.upper()} - GÜNLÜK HAVA TAHMİNİ**\n\n"
-        for i, satir in enumerate(satirlar):
-            if i == 0:
-                mesaj += f"**📌 Bugün:** "
-            else:
-                mesaj += f"**📌 Yarın:** "
-            # Hava durumunu Türkçe'ye çevir
-            satir_cevrilmis = satir
-            for ing, tr in hava_ceviri.items():
-                if ing.lower() in satir.lower():
-                    satir_cevrilmis = satir.replace(ing, tr)
-                    break
-            mesaj += f"{satir_cevrilmis}\n\n"
-        await message.reply(mesaj)
-    except:
-        await message.reply("❌ Hava durumu alınamadı.")
-
-@dp.message_handler(commands=['hava_haftalik'])
-async def hava_haftalik(message: types.Message):
-    """7 günlük hava durumu - gün gün, Türkçe"""
-    sehir = message.get_args()
-    if not sehir:
-        sehir = "Istanbul"
-    try:
-        url = f"https://wttr.in/{sehir}?format=%l:+%t+%C+%w&0..7"
-        response = requests.get(url, timeout=10)
-        satirlar = response.text.strip().split('\n')
-        mesaj = f"📆 **{sehir.upper()} - 7 GÜNLÜK HAVA**\n\n"
-        for i, satir in enumerate(satirlar):
-            if i < 7:
-                # Gün adını Türkçe'ye çevir
-                satir_cevrilmis = satir
-                for ing, tr in gunler_tr.items():
-                    if ing in satir:
-                        satir_cevrilmis = satir.replace(ing, tr)
-                        break
-                # Hava durumunu Türkçe'ye çevir
-                for ing, tr in hava_ceviri.items():
-                    if ing.lower() in satir_cevrilmis.lower():
-                        satir_cevrilmis = satir_cevrilmis.replace(ing, tr)
-                        break
-                mesaj += f"{satir_cevrilmis}\n"
-        await message.reply(mesaj)
-    except:
-        await message.reply("❌ Hava durumu alınamadı.")
-
-@dp.message_handler(commands=['hava_haftalik_detay'])
-async def hava_haftalik_detay(message: types.Message):
-    """7 günlük detaylı hava durumu - Türkçe"""
-    sehir = message.get_args()
-    if not sehir:
-        sehir = "Istanbul"
-    try:
-        url = f"https://wttr.in/{sehir}?format=%l:+%t+%w+%C+%h&0..7"
-        response = requests.get(url, timeout=10)
-        satirlar = response.text.strip().split('\n')
-        mesaj = f"📆 **{sehir.upper()} - 7 GÜNLÜK DETAYLI HAVA**\n\n"
-        for i, satir in enumerate(satirlar):
-            if i < 7:
-                satir_cevrilmis = satir
-                for ing, tr in gunler_tr.items():
-                    if ing in satir:
-                        satir_cevrilmis = satir.replace(ing, tr)
-                        break
-                for ing, tr in hava_ceviri.items():
-                    if ing.lower() in satir_cevrilmis.lower():
-                        satir_cevrilmis = satir_cevrilmis.replace(ing, tr)
-                        break
-                mesaj += f"{satir_cevrilmis}\n"
-        await message.reply(mesaj)
-    except:
-        await message.reply("❌ Hava durumu alınamadı.")
-
-@dp.message_handler(commands=['hava_aylik'])
-async def hava_aylik(message: types.Message):
-    """Aylık hava durumu özeti - Türkçe"""
+    """Şu anki hava durumu"""
     sehir = message.get_args()
     if not sehir:
         sehir = "Istanbul"
     try:
         url = f"https://wttr.in/{sehir}?format=%l:+%t+%C&m"
         response = requests.get(url, timeout=10)
+        sonuc = response.text.strip()
+        await message.reply(f"🌤️ **{sehir.upper()} - ŞU ANKİ HAVA**\n\n{sonuc}")
+    except:
+        await message.reply("❌ Hava durumu alınamadı.")
+
+@dp.message_handler(commands=['hava_gunluk'])
+async def hava_gunluk(message: types.Message):
+    """Bugün ve yarın"""
+    sehir = message.get_args()
+    if not sehir:
+        sehir = "Istanbul"
+    try:
+        url = f"https://wttr.in/{sehir}?0..1&format=%l:+%t+%C+%w&m"
+        response = requests.get(url, timeout=10)
         satirlar = response.text.strip().split('\n')
-        mesaj = f"📊 **{sehir.upper()} - AYLIK HAVA ÖZETİ**\n\n"
-        for satir in satirlar[:10]:
-            satir_cevrilmis = satir
-            for ing, tr in hava_ceviri.items():
-                if ing.lower() in satir_cevrilmis.lower():
-                    satir_cevrilmis = satir_cevrilmis.replace(ing, tr)
-                    break
-            mesaj += f"{satir_cevrilmis}\n"
+        mesaj = f"📅 **{sehir.upper()} - GÜNLÜK HAVA**\n\n"
+        for i, satir in enumerate(satirlar):
+            if i == 0:
+                mesaj += f"**Bugün:** {satir}\n"
+            else:
+                mesaj += f"**Yarın:** {satir}\n"
         await message.reply(mesaj)
+    except:
+        await message.reply("❌ Hava durumu alınamadı.")
+
+@dp.message_handler(commands=['hava_haftalik'])
+async def hava_haftalik(message: types.Message):
+    """7 günlük hava durumu"""
+    sehir = message.get_args()
+    if not sehir:
+        sehir = "Istanbul"
+    try:
+        url = f"https://wttr.in/{sehir}?0..7&format=%l:+%t+%C&m"
+        response = requests.get(url, timeout=10)
+        satirlar = response.text.strip().split('\n')
+        mesaj = f"📆 **{sehir.upper()} - 7 GÜNLÜK HAVA**\n\n"
+        for satir in satirlar[:7]:
+            mesaj += f"{satir}\n"
+        await message.reply(mesaj)
+    except:
+        await message.reply("❌ Hava durumu alınamadı.")
+
+@dp.message_handler(commands=['hava_haftalik_detay'])
+async def hava_haftalik_detay(message: types.Message):
+    """7 günlük detaylı hava durumu"""
+    sehir = message.get_args()
+    if not sehir:
+        sehir = "Istanbul"
+    try:
+        url = f"https://wttr.in/{sehir}?0..7&format=%l:+%t+%w+%C+%h&m"
+        response = requests.get(url, timeout=10)
+        satirlar = response.text.strip().split('\n')
+        mesaj = f"📆 **{sehir.upper()} - 7 GÜNLÜK DETAYLI HAVA**\n\n"
+        for satir in satirlar[:7]:
+            mesaj += f"{satir}\n"
+        await message.reply(mesaj)
+    except:
+        await message.reply("❌ Hava durumu alınamadı.")
+
+@dp.message_handler(commands=['hava_aylik'])
+async def hava_aylik(message: types.Message):
+    """Aylık hava özeti"""
+    sehir = message.get_args()
+    if not sehir:
+        sehir = "Istanbul"
+    try:
+        url = f"https://wttr.in/{sehir}?m&format=%l:+%t+%C"
+        response = requests.get(url, timeout=10)
+        await message.reply(f"📊 **{sehir.upper()} - AYLIK HAVA ÖZETİ**\n\n{response.text.strip()}")
     except:
         await message.reply("❌ Hava durumu alınamadı.")
 
@@ -332,6 +248,7 @@ async def start(message: types.Message):
                          "/kaydet [miktar] [birim] [malzeme] - Stoktan düş\n"
                          "/kaydet [işlem] - Not kaydet\n"
                          "/kaydet_geri_al - Son işlemi geri al\n"
+                         "/kaydet_geri_al [id] - ID ile geri al\n"
                          "/ekle [ad];[miktar];[birim];[görev] - Yeni malzeme ekle\n"
                          "/sil [malzeme] - Malzeme sil (onay: /evet)\n\n"
                          "🔬 **pH KOMUTLARI:**\n"
@@ -353,7 +270,8 @@ async def start(message: types.Message):
                          "⚠️ **UYARI KOMUTLARI:**\n"
                          "/stok_uyari [malzeme] [esik] [birim] - Stok uyarısı ekle\n"
                          "/stok_uyari_sil [malzeme] - Uyarı sil\n"
-                         "/stok_uyari_liste - Uyarıları listele\n\n"
+                         "/stok_uyari_liste - Uyarıları listele\n"
+                         "/stok_uyari_temizle - Tüm uyarıları sil (onay: /stok_uyari_evet)\n\n"
                          "⏰ **HATIRLATMA KOMUTLARI:**\n"
                          "/hatirlat [gun-ay-yil] [saat] [işlem] - Hatırlatma ekle\n"
                          "/hatirlatmalar - Bekleyen hatırlatmalar\n"
@@ -368,8 +286,7 @@ async def start(message: types.Message):
                          "/hava_aylik [şehir] - Aylık özet\n\n"
                          "💾 **DİĞER:**\n"
                          "/yedekle - CSV'leri yedekle\n"
-                         "/test - Bot testi\n\n"
-                         "✅ **Tüm hava durumu Türkçe!**")
+                         "/test - Bot testi")
 
 @dp.message_handler(commands=['test'])
 async def test(message: types.Message):
