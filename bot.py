@@ -5,6 +5,8 @@ import io
 import zipfile
 import asyncio
 import requests
+import json
+import re
 from datetime import datetime
 from openai import OpenAI
 from aiogram import Bot, Dispatcher, executor, types
@@ -23,6 +25,45 @@ silinecek_kayit_hepsi = None
 stok_uyarilari = {}
 stok_uyari_temizlik_onay = False
 baglam_metinleri = {}
+
+# Türkçe gün isimleri
+gunler_tr = {
+    "Monday": "Pazartesi",
+    "Tuesday": "Salı",
+    "Wednesday": "Çarşamba",
+    "Thursday": "Perşembe",
+    "Friday": "Cuma",
+    "Saturday": "Cumartesi",
+    "Sunday": "Pazar"
+}
+
+# İngilizce -> Türkçe hava durumu çevirileri
+hava_ceviri = {
+    "Sunny": "☀️ Güneşli",
+    "Clear": "☀️ Açık",
+    "Partly cloudy": "⛅ Parçalı bulutlu",
+    "Cloudy": "☁️ Bulutlu",
+    "Overcast": "☁️ Kapalı",
+    "Rain": "🌧️ Yağmurlu",
+    "Light rain": "🌧️ Hafif yağmur",
+    "Heavy rain": "🌧️ Şiddetli yağmur",
+    "Shower": "🌦️ Sağanak yağmur",
+    "Thunderstorm": "⛈️ Gök gürültülü fırtına",
+    "Snow": "❄️ Karlı",
+    "Light snow": "❄️ Hafif kar",
+    "Fog": "🌫️ Sisli",
+    "Mist": "🌫️ Puslu",
+    "Windy": "💨 Rüzgarlı"
+}
+
+def hava_cevir(ingilizce_metin):
+    """Hava durumu metnini Türkçe'ye çevirir"""
+    sonuc = ingilizce_metin
+    for ing, tr in hava_ceviri.items():
+        if ing.lower() in ingilizce_metin.lower():
+            sonuc = ingilizce_metin.replace(ing, tr)
+            break
+    return sonuc
 
 # Agnes AI istemcisi
 client = OpenAI(
@@ -143,14 +184,132 @@ def stok_uyari_kontrol(malzeme_adi, kalan_miktar, birim):
                 return True, veri['esik'], veri['birim']
     return False, None, None
 
-def hava_durumu(sehir="Istanbul"):
+# ==================== HAVA DURUMU (TÜRKÇE) ====================
+@dp.message_handler(commands=['hava'])
+async def hava(message: types.Message):
+    """Şu anki hava durumu - Türkçe"""
+    sehir = message.get_args()
+    if not sehir:
+        sehir = "Istanbul"
     try:
         url = f"https://wttr.in/{sehir}?format=%C+%t+%w+%h&m"
         response = requests.get(url, timeout=10)
-        return response.text.strip()
+        sonuc = response.text.strip()
+        # Hava durumunu Türkçe'ye çevir
+        for ing, tr in hava_ceviri.items():
+            if ing.lower() in sonuc.lower():
+                sonuc = sonuc.replace(ing, tr)
+                break
+        await message.reply(f"🌤️ **{sehir.upper()} - ŞU ANKİ HAVA**\n\n{sonuc}\n\n(°C, km/h)")
     except:
-        return "Hava durumu alınamadı."
+        await message.reply("❌ Hava durumu alınamadı.")
 
+@dp.message_handler(commands=['hava_gunluk'])
+async def hava_gunluk(message: types.Message):
+    """Bugün ve yarın detaylı - Türkçe"""
+    sehir = message.get_args()
+    if not sehir:
+        sehir = "Istanbul"
+    try:
+        url = f"https://wttr.in/{sehir}?format=%l:+%t+%w+%C+%h&0..1"
+        response = requests.get(url, timeout=10)
+        satirlar = response.text.strip().split('\n')
+        mesaj = f"📅 **{sehir.upper()} - GÜNLÜK HAVA TAHMİNİ**\n\n"
+        for i, satir in enumerate(satirlar):
+            if i == 0:
+                mesaj += f"**📌 Bugün:** "
+            else:
+                mesaj += f"**📌 Yarın:** "
+            # Hava durumunu Türkçe'ye çevir
+            satir_cevrilmis = satir
+            for ing, tr in hava_ceviri.items():
+                if ing.lower() in satir.lower():
+                    satir_cevrilmis = satir.replace(ing, tr)
+                    break
+            mesaj += f"{satir_cevrilmis}\n\n"
+        await message.reply(mesaj)
+    except:
+        await message.reply("❌ Hava durumu alınamadı.")
+
+@dp.message_handler(commands=['hava_haftalik'])
+async def hava_haftalik(message: types.Message):
+    """7 günlük hava durumu - gün gün, Türkçe"""
+    sehir = message.get_args()
+    if not sehir:
+        sehir = "Istanbul"
+    try:
+        url = f"https://wttr.in/{sehir}?format=%l:+%t+%C+%w&0..7"
+        response = requests.get(url, timeout=10)
+        satirlar = response.text.strip().split('\n')
+        mesaj = f"📆 **{sehir.upper()} - 7 GÜNLÜK HAVA**\n\n"
+        for i, satir in enumerate(satirlar):
+            if i < 7:
+                # Gün adını Türkçe'ye çevir
+                satir_cevrilmis = satir
+                for ing, tr in gunler_tr.items():
+                    if ing in satir:
+                        satir_cevrilmis = satir.replace(ing, tr)
+                        break
+                # Hava durumunu Türkçe'ye çevir
+                for ing, tr in hava_ceviri.items():
+                    if ing.lower() in satir_cevrilmis.lower():
+                        satir_cevrilmis = satir_cevrilmis.replace(ing, tr)
+                        break
+                mesaj += f"{satir_cevrilmis}\n"
+        await message.reply(mesaj)
+    except:
+        await message.reply("❌ Hava durumu alınamadı.")
+
+@dp.message_handler(commands=['hava_haftalik_detay'])
+async def hava_haftalik_detay(message: types.Message):
+    """7 günlük detaylı hava durumu - Türkçe"""
+    sehir = message.get_args()
+    if not sehir:
+        sehir = "Istanbul"
+    try:
+        url = f"https://wttr.in/{sehir}?format=%l:+%t+%w+%C+%h&0..7"
+        response = requests.get(url, timeout=10)
+        satirlar = response.text.strip().split('\n')
+        mesaj = f"📆 **{sehir.upper()} - 7 GÜNLÜK DETAYLI HAVA**\n\n"
+        for i, satir in enumerate(satirlar):
+            if i < 7:
+                satir_cevrilmis = satir
+                for ing, tr in gunler_tr.items():
+                    if ing in satir:
+                        satir_cevrilmis = satir.replace(ing, tr)
+                        break
+                for ing, tr in hava_ceviri.items():
+                    if ing.lower() in satir_cevrilmis.lower():
+                        satir_cevrilmis = satir_cevrilmis.replace(ing, tr)
+                        break
+                mesaj += f"{satir_cevrilmis}\n"
+        await message.reply(mesaj)
+    except:
+        await message.reply("❌ Hava durumu alınamadı.")
+
+@dp.message_handler(commands=['hava_aylik'])
+async def hava_aylik(message: types.Message):
+    """Aylık hava durumu özeti - Türkçe"""
+    sehir = message.get_args()
+    if not sehir:
+        sehir = "Istanbul"
+    try:
+        url = f"https://wttr.in/{sehir}?format=%l:+%t+%C&m"
+        response = requests.get(url, timeout=10)
+        satirlar = response.text.strip().split('\n')
+        mesaj = f"📊 **{sehir.upper()} - AYLIK HAVA ÖZETİ**\n\n"
+        for satir in satirlar[:10]:
+            satir_cevrilmis = satir
+            for ing, tr in hava_ceviri.items():
+                if ing.lower() in satir_cevrilmis.lower():
+                    satir_cevrilmis = satir_cevrilmis.replace(ing, tr)
+                    break
+            mesaj += f"{satir_cevrilmis}\n"
+        await message.reply(mesaj)
+    except:
+        await message.reply("❌ Hava durumu alınamadı.")
+
+# ==================== KOMUTLAR ====================
 @dp.message_handler(commands=['sor'])
 async def sor(message: types.Message):
     soru = message.get_args()
@@ -169,102 +328,173 @@ async def start(message: types.Message):
     await message.answer("🌿 **Yasemin Asistan** hazır!\n\n"
                          "📦 **STOK KOMUTLARI:**\n"
                          "/stok - Envanter listesi\n"
-                         "/stok [malzeme] - Malzeme sorgula (ör: /stok NPK)\n"
-                         "/kaydet [miktar] [birim] [malzeme] - Stoktan düş (ör: /kaydet 5 gr NPK)\n"
-                         "/kaydet [işlem] - Not kaydet (ör: /kaydet Sera kuruldu)\n"
+                         "/stok [malzeme] - Malzeme sorgula\n"
+                         "/kaydet [miktar] [birim] [malzeme] - Stoktan düş\n"
+                         "/kaydet [işlem] - Not kaydet\n"
                          "/kaydet_geri_al - Son işlemi geri al\n"
-                         "/kaydet_geri_al [id] - ID ile geri al\n"
-                         "/ekle [ad];[miktar];[birim];[görev] - Yeni malzeme ekle (ör: /ekle NPK;1000;gr;Gübre)\n"
+                         "/ekle [ad];[miktar];[birim];[görev] - Yeni malzeme ekle\n"
                          "/sil [malzeme] - Malzeme sil (onay: /evet)\n\n"
                          "🔬 **pH KOMUTLARI:**\n"
-                         "/ph [teneke] - Son pH (ör: /ph 1)\n"
-                         "/ph [teneke] hepsi - Tüm pH (ör: /ph 1 hepsi)\n"
+                         "/ph [teneke] - Son pH\n"
+                         "/ph [teneke] hepsi - Tüm pH\n"
                          "/ph_tumu - Tüm tenekelerin tüm pH\n"
-                         "/ph_ekle [teneke] [ph] - pH ekle (ör: /ph_ekle 1 6.5)\n"
+                         "/ph_ekle [teneke] [ph] - pH ekle\n"
                          "/ph_sil [teneke] - Son pH kaydını sil\n\n"
                          "📜 **GEÇMİŞ KOMUTLARI:**\n"
                          "/gecmis - Son 10 işlem\n"
                          "/gecmis hepsi - Tüm geçmiş\n"
-                         "/gecmis [tarih] - Tarihli işlemler (ör: /gecmis 14-05-2026)\n"
+                         "/gecmis [tarih] - Tarihli işlemler\n"
                          "/gecmis_sil [id] - İşlem sil (onay: /gecmis_evet)\n\n"
                          "📊 **RAPOR KOMUTLARI:**\n"
-                         "/rapor_aylik [aa-yyyy] - Aylık rapor (ör: /rapor_aylik 05-2026)\n"
+                         "/rapor_aylik [aa-yyyy] - Aylık rapor\n"
                          "/rapor_gunluk - Günlük rapor\n"
                          "/istatistik - Genel istatistik\n"
-                         "/grafik [malzeme] - Stok grafiği (ör: /grafik NPK)\n\n"
+                         "/grafik [malzeme] - Stok grafiği\n\n"
                          "⚠️ **UYARI KOMUTLARI:**\n"
-                         "/stok_uyari [malzeme] [esik] [birim] - Stok uyarısı ekle (ör: /stok_uyari NPK 100 gr)\n"
+                         "/stok_uyari [malzeme] [esik] [birim] - Stok uyarısı ekle\n"
                          "/stok_uyari_sil [malzeme] - Uyarı sil\n"
-                         "/stok_uyari_liste - Uyarıları listele\n"
-                         "/stok_uyari_temizle - Tüm uyarıları sil (onay: /stok_uyari_evet)\n\n"
+                         "/stok_uyari_liste - Uyarıları listele\n\n"
                          "⏰ **HATIRLATMA KOMUTLARI:**\n"
-                         "/hatirlat [gun-ay-yil] [saat] [işlem] - Hatırlatma ekle (ör: /hatirlat 30-07-2026 10:00 Sula)\n"
+                         "/hatirlat [gun-ay-yil] [saat] [işlem] - Hatırlatma ekle\n"
                          "/hatirlatmalar - Bekleyen hatırlatmalar\n"
                          "/hatirlat_sil [id] - Hatırlatma sil\n\n"
                          "🤖 **YAPAY ZEKA:**\n"
                          "/sor [soru] - Agnes AI'ya sor\n\n"
                          "🌤️ **HAVA DURUMU:**\n"
-                         "/hava [şehir] - Anlık hava (ör: /hava İstanbul)\n"
-                         "/hava_gunluk [şehir] - Günlük tahmin\n"
-                         "/hava_haftalik [şehir] - 7 günlük tahmin\n"
+                         "/hava [şehir] - Anlık hava\n"
+                         "/hava_gunluk [şehir] - Bugün ve yarın\n"
+                         "/hava_haftalik [şehir] - 7 günlük\n"
+                         "/hava_haftalik_detay [şehir] - 7 günlük detaylı\n"
                          "/hava_aylik [şehir] - Aylık özet\n\n"
                          "💾 **DİĞER:**\n"
-                         "/yedekle - Tüm CSV'leri yedekle\n"
-                         "/test - Bot testi")
+                         "/yedekle - CSV'leri yedekle\n"
+                         "/test - Bot testi\n\n"
+                         "✅ **Tüm hava durumu Türkçe!**")
 
 @dp.message_handler(commands=['test'])
 async def test(message: types.Message):
     await message.answer("✅ Bot çalışıyor!")
 
-# ==================== HAVA DURUMU ====================
-@dp.message_handler(commands=['hava'])
-async def hava(message: types.Message):
-    sehir = message.get_args()
-    if not sehir:
-        sehir = "Istanbul"
-    durum = hava_durumu(sehir)
-    await message.reply(f"🌤️ **{sehir.upper()} ANLIK HAVA DURUMU**\n\n{durum}\n\n(°C, km/h)")
+# ==================== YEDEKLEME ====================
+@dp.message_handler(commands=['yedekle'])
+async def yedekle(message: types.Message):
+    await message.reply("📦 Yedekleme hazırlanıyor...")
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+        for dosya in ['inventory.csv', 'history.csv', 'ph_records.csv', 'reminders.csv']:
+            try:
+                zip_file.write(dosya)
+            except:
+                pass
+    zip_buffer.seek(0)
+    await message.reply_document(document=('yasemin_yedek.zip', zip_buffer), caption="📦 Yedek dosyaları")
 
-@dp.message_handler(commands=['hava_gunluk'])
-async def hava_gunluk(message: types.Message):
-    sehir = message.get_args()
-    if not sehir:
-        sehir = "Istanbul"
+# ==================== STOK UYARISI ====================
+@dp.message_handler(commands=['stok_uyari'])
+async def stok_uyari_ekle(message: types.Message):
+    param = message.get_args()
+    if not param:
+        await message.reply("Örnek: /stok_uyari \"NPK\" 100 gr")
+        return
+    
+    parcalar = param.split()
+    if len(parcalar) < 3:
+        await message.reply("Örnek: /stok_uyari \"NPK\" 100 gr")
+        return
+    
     try:
-        url = f"https://wttr.in/{sehir}?format=%C+%t+%w+%h&m&0"
-        response = requests.get(url, timeout=10)
-        await message.reply(f"📅 **{sehir.upper()} GÜNLÜK HAVA TAHMİNİ**\n\n{response.text.strip()}")
+        esik = float(parcalar[-2])
+        birim = parcalar[-1].lower()
+        malzeme_aranan = " ".join(parcalar[:-2]).strip('"')
     except:
-        await message.reply("❌ Hava durumu alınamadı.")
+        await message.reply("Örnek: /stok_uyari \"NPK\" 100 gr")
+        return
+    
+    stoklar = stok_oku()
+    eslesenler = malzeme_bul(malzeme_aranan, stoklar)
+    
+    if not eslesenler:
+        await message.reply(f"❌ '{malzeme_aranan}' envanterde bulunamadı.")
+        return
+    
+    if len(eslesenler) > 1:
+        liste = "\n".join([f"• {item.get('Malzeme / Alet')}" for item in eslesenler[:5]])
+        await message.reply(f"⚠️ '{malzeme_aranan}' için birden fazla malzeme bulundu:\n\n{liste}\n\nLütfen tam adını yazın.")
+        return
+    
+    malzeme_adi = eslesenler[0].get('Malzeme / Alet')
+    stok_uyarilari[malzeme_adi] = {'esik': esik, 'birim': birim}
+    await message.reply(f"✅ Stok uyarısı eklendi:\n📦 {malzeme_adi}\n⚠️ {esik} {birim} altında uyarı verilecek.")
 
-@dp.message_handler(commands=['hava_haftalik'])
-async def hava_haftalik(message: types.Message):
-    sehir = message.get_args()
-    if not sehir:
-        sehir = "Istanbul"
-    try:
-        url = f"https://wttr.in/{sehir}?format=%C+%t+%w+%h&m&1..7"
-        response = requests.get(url, timeout=10)
-        await message.reply(f"📆 **{sehir.upper()} 7 GÜNLÜK HAVA TAHMİNİ**\n\n{response.text.strip()}")
-    except:
-        await message.reply("❌ Hava durumu alınamadı.")
+@dp.message_handler(commands=['stok_uyari_sil'])
+async def stok_uyari_sil(message: types.Message):
+    param = message.get_args()
+    if not param:
+        await message.reply("Örnek: /stok_uyari_sil NPK")
+        return
+    
+    silinecekler = []
+    for malzeme in stok_uyarilari.keys():
+        if param.lower() in malzeme.lower():
+            silinecekler.append(malzeme)
+    
+    if not silinecekler:
+        await message.reply(f"❌ '{param}' için stok uyarısı bulunamadı.")
+        return
+    
+    if len(silinecekler) > 1:
+        liste = "\n".join([f"• {m}" for m in silinecekler])
+        await message.reply(f"⚠️ '{param}' için birden fazla uyarı bulundu:\n\n{liste}\n\nLütfen tam adını yazın.")
+        return
+    
+    del stok_uyarilari[silinecekler[0]]
+    await message.reply(f"✅ {silinecekler[0]} için stok uyarısı kaldırıldı.")
 
-@dp.message_handler(commands=['hava_aylik'])
-async def hava_aylik(message: types.Message):
-    sehir = message.get_args()
-    if not sehir:
-        sehir = "Istanbul"
-    try:
-        url = f"https://wttr.in/{sehir}?format=%C+%t+%w+%h&m&M"
-        response = requests.get(url, timeout=10)
-        await message.reply(f"📊 **{sehir.upper()} AYLIK HAVA ÖZETİ**\n\n{response.text.strip()}")
-    except:
-        await message.reply("❌ Hava durumu alınamadı.")
+@dp.message_handler(commands=['stok_uyari_liste'])
+async def stok_uyari_liste(message: types.Message):
+    if not stok_uyarilari:
+        await message.reply("📋 Aktif stok uyarısı yok.\n\n/stok_uyari \"NPK\" 100 gr ile ekleyebilirsin.")
+        return
+    
+    mesaj = "📋 **AKTİF STOK UYARILARI**\n\n"
+    stoklar = stok_oku()
+    for malzeme, veri in stok_uyarilari.items():
+        kalan = "?"
+        for item in stoklar:
+            if item.get('Malzeme / Alet') == malzeme:
+                kalan = f"{item.get('Kalan Miktar')} {item.get('Birim')}"
+                break
+        mesaj += f"📦 {malzeme}\n   ⚠️ Eşik: {veri['esik']} {veri['birim']} | 📊 Güncel: {kalan}\n\n"
+    await message.reply(mesaj)
 
-# ==================== TOPLU KAYDET ====================
-@dp.message_handler(commands=['toplu_kaydet'])
-async def toplu_kaydet(message: types.Message):
-    await message.reply("📝 Toplu kayıt için bir txt dosyası gönderin.\n\nDosya formatı:\nher satırda bir işlem\nÖrnek:\n5 gr NPK\n10 ml Lena Tonik\nSera kuruldu")
+@dp.message_handler(commands=['stok_uyari_temizle'])
+async def stok_uyari_temizle(message: types.Message):
+    global stok_uyari_temizlik_onay
+    if not stok_uyarilari:
+        await message.reply("❌ Silinecek stok uyarısı yok.")
+        return
+    
+    stok_uyari_temizlik_onay = True
+    await message.reply(f"⚠️ **DİKKAT!**\n\n"
+                       f"TÜM stok uyarıları silinecek ({len(stok_uyarilari)} uyarı).\n\n"
+                       f"**Bu işlem GERİ DÖNÜŞÜMSÜZDÜR!**\n\n"
+                       f"30 saniye içinde `/stok_uyari_evet` yazın.")
+    
+    await asyncio.sleep(30)
+    if stok_uyari_temizlik_onay:
+        stok_uyari_temizlik_onay = False
+        await message.reply("⏰ Silme iptal edildi.")
+
+@dp.message_handler(commands=['stok_uyari_evet'])
+async def stok_uyari_evet(message: types.Message):
+    global stok_uyari_temizlik_onay, stok_uyarilari
+    if not stok_uyari_temizlik_onay:
+        await message.reply("❌ Silinecek uyarı yok veya süresi doldu. Önce /stok_uyari_temizle komutunu kullanın.")
+        return
+    
+    stok_uyarilari.clear()
+    stok_uyari_temizlik_onay = False
+    await message.reply("✅ Tüm stok uyarıları silindi.")
 
 # ==================== İSTATİSTİK ====================
 @dp.message_handler(commands=['istatistik'])
@@ -320,167 +550,12 @@ async def rapor_gunluk(message: types.Message):
     except Exception as e:
         await message.reply(f"❌ Rapor alınamadı: {e}")
 
-# ==================== GRAFİK ====================
-@dp.message_handler(commands=['grafik'])
-async def grafik(message: types.Message):
-    param = message.get_args()
-    if not param:
-        await message.reply("Örnek: /grafik NPK\n\nBir malzemenin stok geçmişini basit grafikle gösterir.")
-        return
-    
-    try:
-        with open('history.csv', 'r', encoding='utf-8-sig') as f:
-            reader = csv.reader(f)
-            satirlar = list(reader)
-        
-        kayitlar = []
-        for row in satirlar[1:]:
-            if len(row) >= 3 and param.lower() in row[2].lower():
-                kayitlar.append(row)
-        
-        if not kayitlar:
-            await message.reply(f"❌ '{param}' için geçmiş kayıt bulunamadı.")
-            return
-        
-        sonlar = kayitlar[-10:][::-1]
-        grafik = f"📊 **'{param.upper()}' STOK GRAFİĞİ (Son 10 kullanım)**\n\n"
-        for row in sonlar:
-            grafik += f"📅 {row[0]}: {row[2]}\n"
-        
-        await message.reply(grafik)
-    except Exception as e:
-        await message.reply(f"❌ Grafik alınamadı: {e}")
-
-# ==================== YEDEKLEME ====================
-@dp.message_handler(commands=['yedekle'])
-async def yedekle(message: types.Message):
-    await message.reply("📦 Yedekleme hazırlanıyor...")
-    zip_buffer = io.BytesIO()
-    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-        for dosya in ['inventory.csv', 'history.csv', 'ph_records.csv', 'reminders.csv']:
-            try:
-                zip_file.write(dosya)
-            except:
-                pass
-    zip_buffer.seek(0)
-    await message.reply_document(document=('yasemin_yedek.zip', zip_buffer), caption="📦 Yedek dosyaları")
-
-# ==================== STOK UYARISI ====================
-@dp.message_handler(commands=['stok_uyari'])
-async def stok_uyari_ekle(message: types.Message):
-    param = message.get_args()
-    if not param:
-        await message.reply("Örnek: /stok_uyari \"NPK 20-20-20 (Klimaks)\" 100 gr\n\nBirimler: gr, ml, l, adet")
-        return
-    
-    parcalar = param.split()
-    if len(parcalar) < 3:
-        await message.reply("Örnek: /stok_uyari \"NPK 20-20-20 (Klimaks)\" 100 gr")
-        return
-    
-    try:
-        esik = float(parcalar[-2])
-        birim = parcalar[-1].lower()
-        if birim not in ['gr', 'ml', 'l', 'adet']:
-            await message.reply("Birim 'gr', 'ml', 'l' veya 'adet' olmalı.")
-            return
-        malzeme_aranan = " ".join(parcalar[:-2]).strip('"')
-    except:
-        await message.reply("Örnek: /stok_uyari \"NPK 20-20-20 (Klimaks)\" 100 gr")
-        return
-    
-    stoklar = stok_oku()
-    eslesenler = malzeme_bul(malzeme_aranan, stoklar)
-    
-    if not eslesenler:
-        await message.reply(f"❌ '{malzeme_aranan}' envanterde bulunamadı.")
-        return
-    
-    if len(eslesenler) > 1:
-        liste = "\n".join([f"• {item.get('Malzeme / Alet')}" for item in eslesenler[:5]])
-        await message.reply(f"⚠️ '{malzeme_aranan}' için birden fazla malzeme bulundu:\n\n{liste}\n\nLütfen tam adını yazın.\nÖrnek: /stok_uyari \"NPK 20-20-20 (Klimaks)\" 100 gr")
-        return
-    
-    malzeme_adi = eslesenler[0].get('Malzeme / Alet')
-    stok_uyarilari[malzeme_adi] = {'esik': esik, 'birim': birim}
-    await message.reply(f"✅ Stok uyarısı eklendi:\n📦 {malzeme_adi}\n⚠️ {esik} {birim} altında uyarı verilecek.")
-
-@dp.message_handler(commands=['stok_uyari_sil'])
-async def stok_uyari_sil(message: types.Message):
-    param = message.get_args()
-    if not param:
-        await message.reply("Örnek: /stok_uyari_sil \"NPK 20-20-20 (Klimaks)\"")
-        return
-    
-    silinecekler = []
-    for malzeme in stok_uyarilari.keys():
-        if param.lower() in malzeme.lower():
-            silinecekler.append(malzeme)
-    
-    if not silinecekler:
-        await message.reply(f"❌ '{param}' için stok uyarısı bulunamadı.")
-        return
-    
-    if len(silinecekler) > 1:
-        liste = "\n".join([f"• {m}" for m in silinecekler])
-        await message.reply(f"⚠️ '{param}' için birden fazla uyarı bulundu:\n\n{liste}\n\nLütfen tam adını yazın.\nÖrnek: /stok_uyari_sil \"NPK 20-20-20 (Klimaks)\"")
-        return
-    
-    del stok_uyarilari[silinecekler[0]]
-    await message.reply(f"✅ {silinecekler[0]} için stok uyarısı kaldırıldı.")
-
-@dp.message_handler(commands=['stok_uyari_liste'])
-async def stok_uyari_liste(message: types.Message):
-    if not stok_uyarilari:
-        await message.reply("📋 Aktif stok uyarısı yok.\n\n/stok_uyari \"NPK 20-20-20 (Klimaks)\" 100 gr ile ekleyebilirsin.")
-        return
-    
-    mesaj = "📋 **AKTİF STOK UYARILARI**\n\n"
-    stoklar = stok_oku()
-    for malzeme, veri in stok_uyarilari.items():
-        kalan = "?"
-        for item in stoklar:
-            if item.get('Malzeme / Alet') == malzeme:
-                kalan = f"{item.get('Kalan Miktar')} {item.get('Birim')}"
-                break
-        mesaj += f"📦 {malzeme}\n   ⚠️ Eşik: {veri['esik']} {veri['birim']} | 📊 Güncel: {kalan}\n\n"
-    await message.reply(mesaj)
-
-@dp.message_handler(commands=['stok_uyari_temizle'])
-async def stok_uyari_temizle(message: types.Message):
-    global stok_uyari_temizlik_onay
-    if not stok_uyarilari:
-        await message.reply("❌ Silinecek stok uyarısı yok.")
-        return
-    
-    stok_uyari_temizlik_onay = True
-    await message.reply(f"⚠️ **DİKKAT!**\n\n"
-                       f"TÜM stok uyarıları silinecek ({len(stok_uyarilari)} uyarı).\n\n"
-                       f"**Bu işlem GERİ DÖNÜŞÜMSÜZDÜR!**\n\n"
-                       f"30 saniye içinde `/stok_uyari_evet` yazın.")
-    
-    await asyncio.sleep(30)
-    if stok_uyari_temizlik_onay:
-        stok_uyari_temizlik_onay = False
-        await message.reply("⏰ Silme iptal edildi.")
-
-@dp.message_handler(commands=['stok_uyari_evet'])
-async def stok_uyari_evet(message: types.Message):
-    global stok_uyari_temizlik_onay, stok_uyarilari
-    if not stok_uyari_temizlik_onay:
-        await message.reply("❌ Silinecek uyarı yok veya süresi doldu. Önce /stok_uyari_temizle komutunu kullanın.")
-        return
-    
-    stok_uyarilari.clear()
-    stok_uyari_temizlik_onay = False
-    await message.reply("✅ Tüm stok uyarıları silindi.")
-
 # ==================== AYLIK RAPOR ====================
 @dp.message_handler(commands=['rapor_aylik'])
 async def rapor_aylik(message: types.Message):
     ay_param = message.get_args()
     if not ay_param:
-        await message.reply("Örnek: /rapor_aylik 05-2026\n\nAy formatı: AA-YYYY (örnek: 05-2026)")
+        await message.reply("Örnek: /rapor_aylik 05-2026")
         return
     
     try:
@@ -547,6 +622,37 @@ async def rapor_aylik(message: types.Message):
     except Exception as e:
         await message.reply(f"❌ Rapor alınamadı: {e}")
 
+# ==================== GRAFİK ====================
+@dp.message_handler(commands=['grafik'])
+async def grafik(message: types.Message):
+    param = message.get_args()
+    if not param:
+        await message.reply("Örnek: /grafik NPK\n\nBir malzemenin stok geçmişini basit grafikle gösterir.")
+        return
+    
+    try:
+        with open('history.csv', 'r', encoding='utf-8-sig') as f:
+            reader = csv.reader(f)
+            satirlar = list(reader)
+        
+        kayitlar = []
+        for row in satirlar[1:]:
+            if len(row) >= 3 and param.lower() in row[2].lower():
+                kayitlar.append(row)
+        
+        if not kayitlar:
+            await message.reply(f"❌ '{param}' için geçmiş kayıt bulunamadı.")
+            return
+        
+        sonlar = kayitlar[-10:][::-1]
+        grafik = f"📊 **'{param.upper()}' STOK GRAFİĞİ (Son 10 kullanım)**\n\n"
+        for row in sonlar:
+            grafik += f"📅 {row[0]}: {row[2]}\n"
+        
+        await message.reply(grafik)
+    except Exception as e:
+        await message.reply(f"❌ Grafik alınamadı: {e}")
+
 # ==================== HATIRLATMA ====================
 @dp.message_handler(commands=['hatirlat'])
 async def hatirlat(message: types.Message):
@@ -557,7 +663,7 @@ async def hatirlat(message: types.Message):
     
     parcalar = param.split(maxsplit=2)
     if len(parcalar) < 3:
-        await message.reply("Format: /hatirlat gun-ay-yil saat islem\nÖrnek: /hatirlat 30-07-2026 10:00 Sula")
+        await message.reply("Format: /hatirlat gun-ay-yil saat islem")
         return
     
     tarih, saat, islem = parcalar
