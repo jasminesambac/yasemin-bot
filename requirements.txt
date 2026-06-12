@@ -1,4 +1,6 @@
 aiogram==2.25.2
-openai
+google-genai
 requests
 pandas
+gspread
+oauth2client
