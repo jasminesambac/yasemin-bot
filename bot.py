@@ -60,7 +60,7 @@ def ask_agnes(question, user_id=None):
         messages = []
         if user_id and user_id in baglam_metinleri and baglam_metinleri[user_id]:
             baglam = baglam_metinleri[user_id][-2000:]
-            messages.append({"role": "system", "content": f"Önceki konuşma geçmişi:\n{baglam}"})
+            messages.append({"role": "system", "content": f"Previous conversation:\n{baglam}"})
         messages.append({"role": "user", "content": question})
         response = client.chat.completions.create(
             model="agnes-2.0-flash",
@@ -70,7 +70,7 @@ def ask_agnes(question, user_id=None):
         cevap = response.choices[0].message.content
         return cevap
     except Exception as e:
-        return f"Agnes hatası: {str(e)[:100]}"
+        return f"Agnes error: {str(e)[:100]}"
 
 def stok_oku():
     stok_listesi = []
@@ -143,10 +143,9 @@ def stok_uyari_kontrol(malzeme_adi, kalan_miktar, birim):
                 return True, veri['esik'], veri['birim']
     return False, None, None
 
-# ==================== HAVA DURUMU (DÜZELTİLMİŞ) ====================
+# ==================== HAVA DURUMU (İNGİLİZCE - ÇALIŞIR) ====================
 @dp.message_handler(commands=['hava'])
 async def hava(message: types.Message):
-    """Şu anki hava durumu"""
     sehir = message.get_args()
     if not sehir:
         sehir = "Istanbul"
@@ -154,13 +153,12 @@ async def hava(message: types.Message):
         url = f"https://wttr.in/{sehir}?format=%l:+%t+%C&m"
         response = requests.get(url, timeout=10)
         sonuc = response.text.strip()
-        await message.reply(f"🌤️ **{sehir.upper()} - ŞU ANKİ HAVA**\n\n{sonuc}")
+        await message.reply(f"🌤️ **{sehir.upper()} - CURRENT WEATHER**\n\n{sonuc}")
     except:
-        await message.reply("❌ Hava durumu alınamadı.")
+        await message.reply("❌ Weather data unavailable.")
 
 @dp.message_handler(commands=['hava_gunluk'])
 async def hava_gunluk(message: types.Message):
-    """Bugün ve yarın"""
     sehir = message.get_args()
     if not sehir:
         sehir = "Istanbul"
@@ -168,19 +166,18 @@ async def hava_gunluk(message: types.Message):
         url = f"https://wttr.in/{sehir}?0..1&format=%l:+%t+%C+%w&m"
         response = requests.get(url, timeout=10)
         satirlar = response.text.strip().split('\n')
-        mesaj = f"📅 **{sehir.upper()} - GÜNLÜK HAVA**\n\n"
+        mesaj = f"📅 **{sehir.upper()} - DAILY WEATHER**\n\n"
         for i, satir in enumerate(satirlar):
             if i == 0:
-                mesaj += f"**Bugün:** {satir}\n"
+                mesaj += f"**Today:** {satir}\n"
             else:
-                mesaj += f"**Yarın:** {satir}\n"
+                mesaj += f"**Tomorrow:** {satir}\n"
         await message.reply(mesaj)
     except:
-        await message.reply("❌ Hava durumu alınamadı.")
+        await message.reply("❌ Weather data unavailable.")
 
 @dp.message_handler(commands=['hava_haftalik'])
 async def hava_haftalik(message: types.Message):
-    """7 günlük hava durumu"""
     sehir = message.get_args()
     if not sehir:
         sehir = "Istanbul"
@@ -188,16 +185,15 @@ async def hava_haftalik(message: types.Message):
         url = f"https://wttr.in/{sehir}?0..7&format=%l:+%t+%C&m"
         response = requests.get(url, timeout=10)
         satirlar = response.text.strip().split('\n')
-        mesaj = f"📆 **{sehir.upper()} - 7 GÜNLÜK HAVA**\n\n"
+        mesaj = f"📆 **{sehir.upper()} - 7 DAY WEATHER**\n\n"
         for satir in satirlar[:7]:
             mesaj += f"{satir}\n"
         await message.reply(mesaj)
     except:
-        await message.reply("❌ Hava durumu alınamadı.")
+        await message.reply("❌ Weather data unavailable.")
 
 @dp.message_handler(commands=['hava_haftalik_detay'])
 async def hava_haftalik_detay(message: types.Message):
-    """7 günlük detaylı hava durumu"""
     sehir = message.get_args()
     if not sehir:
         sehir = "Istanbul"
@@ -205,35 +201,34 @@ async def hava_haftalik_detay(message: types.Message):
         url = f"https://wttr.in/{sehir}?0..7&format=%l:+%t+%w+%C+%h&m"
         response = requests.get(url, timeout=10)
         satirlar = response.text.strip().split('\n')
-        mesaj = f"📆 **{sehir.upper()} - 7 GÜNLÜK DETAYLI HAVA**\n\n"
+        mesaj = f"📆 **{sehir.upper()} - 7 DAY DETAILED WEATHER**\n\n"
         for satir in satirlar[:7]:
             mesaj += f"{satir}\n"
         await message.reply(mesaj)
     except:
-        await message.reply("❌ Hava durumu alınamadı.")
+        await message.reply("❌ Weather data unavailable.")
 
 @dp.message_handler(commands=['hava_aylik'])
 async def hava_aylik(message: types.Message):
-    """Aylık hava özeti"""
     sehir = message.get_args()
     if not sehir:
         sehir = "Istanbul"
     try:
         url = f"https://wttr.in/{sehir}?m&format=%l:+%t+%C"
         response = requests.get(url, timeout=10)
-        await message.reply(f"📊 **{sehir.upper()} - AYLIK HAVA ÖZETİ**\n\n{response.text.strip()}")
+        await message.reply(f"📊 **{sehir.upper()} - MONTHLY WEATHER**\n\n{response.text.strip()}")
     except:
-        await message.reply("❌ Hava durumu alınamadı.")
+        await message.reply("❌ Weather data unavailable.")
 
 # ==================== KOMUTLAR ====================
 @dp.message_handler(commands=['sor'])
 async def sor(message: types.Message):
     soru = message.get_args()
     if not soru:
-        await message.reply("Bir soru yaz: /sor [sorunuz]")
+        await message.reply("Write a question: /sor [your question]")
         return
     user_id = str(message.from_user.id)
-    msg = await message.reply("🤔 Agnes düşünüyor...")
+    msg = await message.reply("🤔 Agnes is thinking...")
     cevap = ask_agnes(soru, user_id)
     baglam_guncelle(user_id, soru, cevap)
     for parca in mesaj_parcala(cevap):
@@ -241,61 +236,59 @@ async def sor(message: types.Message):
 
 @dp.message_handler(commands=['start'])
 async def start(message: types.Message):
-    await message.answer("🌿 **Yasemin Asistan** hazır!\n\n"
-                         "📦 **STOK KOMUTLARI:**\n"
-                         "/stok - Envanter listesi\n"
-                         "/stok [malzeme] - Malzeme sorgula\n"
-                         "/kaydet [miktar] [birim] [malzeme] - Stoktan düş\n"
-                         "/kaydet [işlem] - Not kaydet\n"
-                         "/kaydet_geri_al - Son işlemi geri al\n"
-                         "/kaydet_geri_al [id] - ID ile geri al\n"
-                         "/ekle [ad];[miktar];[birim];[görev] - Yeni malzeme ekle\n"
-                         "/sil [malzeme] - Malzeme sil (onay: /evet)\n\n"
-                         "🔬 **pH KOMUTLARI:**\n"
-                         "/ph [teneke] - Son pH\n"
-                         "/ph [teneke] hepsi - Tüm pH\n"
-                         "/ph_tumu - Tüm tenekelerin tüm pH\n"
-                         "/ph_ekle [teneke] [ph] - pH ekle\n"
-                         "/ph_sil [teneke] - Son pH kaydını sil\n\n"
-                         "📜 **GEÇMİŞ KOMUTLARI:**\n"
-                         "/gecmis - Son 10 işlem\n"
-                         "/gecmis hepsi - Tüm geçmiş\n"
-                         "/gecmis [tarih] - Tarihli işlemler\n"
-                         "/gecmis_sil [id] - İşlem sil (onay: /gecmis_evet)\n\n"
-                         "📊 **RAPOR KOMUTLARI:**\n"
-                         "/rapor_aylik [aa-yyyy] - Aylık rapor\n"
-                         "/rapor_gunluk - Günlük rapor\n"
-                         "/istatistik - Genel istatistik\n"
-                         "/grafik [malzeme] - Stok grafiği\n\n"
-                         "⚠️ **UYARI KOMUTLARI:**\n"
-                         "/stok_uyari [malzeme] [esik] [birim] - Stok uyarısı ekle\n"
-                         "/stok_uyari_sil [malzeme] - Uyarı sil\n"
-                         "/stok_uyari_liste - Uyarıları listele\n"
-                         "/stok_uyari_temizle - Tüm uyarıları sil (onay: /stok_uyari_evet)\n\n"
-                         "⏰ **HATIRLATMA KOMUTLARI:**\n"
-                         "/hatirlat [gun-ay-yil] [saat] [işlem] - Hatırlatma ekle\n"
-                         "/hatirlatmalar - Bekleyen hatırlatmalar\n"
-                         "/hatirlat_sil [id] - Hatırlatma sil\n\n"
-                         "🤖 **YAPAY ZEKA:**\n"
-                         "/sor [soru] - Agnes AI'ya sor\n\n"
-                         "🌤️ **HAVA DURUMU:**\n"
-                         "/hava [şehir] - Anlık hava\n"
-                         "/hava_gunluk [şehir] - Bugün ve yarın\n"
-                         "/hava_haftalik [şehir] - 7 günlük\n"
-                         "/hava_haftalik_detay [şehir] - 7 günlük detaylı\n"
-                         "/hava_aylik [şehir] - Aylık özet\n\n"
-                         "💾 **DİĞER:**\n"
-                         "/yedekle - CSV'leri yedekle\n"
-                         "/test - Bot testi")
+    await message.answer("🌿 **Yasemin Assistant** ready!\n\n"
+                         "📦 **STOCK COMMANDS:**\n"
+                         "/stok - Inventory list\n"
+                         "/stok [material] - Search material\n"
+                         "/kaydet [amount] [unit] [material] - Use stock\n"
+                         "/kaydet [note] - Save note\n"
+                         "/kaydet_geri_al - Undo last operation\n"
+                         "/ekle [name];[amount];[unit];[task] - Add new material\n"
+                         "/sil [material] - Delete material (confirm: /evet)\n\n"
+                         "🔬 **pH COMMANDS:**\n"
+                         "/ph [can] - Latest pH\n"
+                         "/ph [can] hepsi - All pH records\n"
+                         "/ph_tumu - All cans all pH\n"
+                         "/ph_ekle [can] [ph] - Add pH\n"
+                         "/ph_sil [can] - Delete last pH\n\n"
+                         "📜 **HISTORY COMMANDS:**\n"
+                         "/gecmis - Last 10 records\n"
+                         "/gecmis hepsi - All history\n"
+                         "/gecmis [date] - Date filtered\n"
+                         "/gecmis_sil [id] - Delete record (confirm: /gecmis_evet)\n\n"
+                         "📊 **REPORT COMMANDS:**\n"
+                         "/rapor_aylik [mm-yyyy] - Monthly report\n"
+                         "/rapor_gunluk - Daily report\n"
+                         "/istatistik - Statistics\n"
+                         "/grafik [material] - Stock graph\n\n"
+                         "⚠️ **ALERT COMMANDS:**\n"
+                         "/stok_uyari [material] [threshold] [unit] - Add stock alert\n"
+                         "/stok_uyari_sil [material] - Remove alert\n"
+                         "/stok_uyari_liste - List alerts\n\n"
+                         "⏰ **REMINDER COMMANDS:**\n"
+                         "/hatirlat [dd-mm-yyyy] [hour:min] [task] - Add reminder\n"
+                         "/hatirlatmalar - Pending reminders\n"
+                         "/hatirlat_sil [id] - Delete reminder\n\n"
+                         "🤖 **AI:**\n"
+                         "/sor [question] - Ask Agnes AI\n\n"
+                         "🌤️ **WEATHER:**\n"
+                         "/hava [city] - Current weather\n"
+                         "/hava_gunluk [city] - Today & tomorrow\n"
+                         "/hava_haftalik [city] - 7 days\n"
+                         "/hava_haftalik_detay [city] - 7 days detailed\n"
+                         "/hava_aylik [city] - Monthly summary\n\n"
+                         "💾 **OTHER:**\n"
+                         "/yedekle - Backup CSV files\n"
+                         "/test - Bot test")
 
 @dp.message_handler(commands=['test'])
 async def test(message: types.Message):
-    await message.answer("✅ Bot çalışıyor!")
+    await message.answer("✅ Bot is working!")
 
 # ==================== YEDEKLEME ====================
 @dp.message_handler(commands=['yedekle'])
 async def yedekle(message: types.Message):
-    await message.reply("📦 Yedekleme hazırlanıyor...")
+    await message.reply("📦 Preparing backup...")
     zip_buffer = io.BytesIO()
     with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
         for dosya in ['inventory.csv', 'history.csv', 'ph_records.csv', 'reminders.csv']:
@@ -304,19 +297,19 @@ async def yedekle(message: types.Message):
             except:
                 pass
     zip_buffer.seek(0)
-    await message.reply_document(document=('yasemin_yedek.zip', zip_buffer), caption="📦 Yedek dosyaları")
+    await message.reply_document(document=('yasemin_yedek.zip', zip_buffer), caption="📦 Backup files")
 
 # ==================== STOK UYARISI ====================
 @dp.message_handler(commands=['stok_uyari'])
 async def stok_uyari_ekle(message: types.Message):
     param = message.get_args()
     if not param:
-        await message.reply("Örnek: /stok_uyari \"NPK\" 100 gr")
+        await message.reply("Example: /stok_uyari \"NPK\" 100 gr")
         return
     
     parcalar = param.split()
     if len(parcalar) < 3:
-        await message.reply("Örnek: /stok_uyari \"NPK\" 100 gr")
+        await message.reply("Example: /stok_uyari \"NPK\" 100 gr")
         return
     
     try:
@@ -324,30 +317,30 @@ async def stok_uyari_ekle(message: types.Message):
         birim = parcalar[-1].lower()
         malzeme_aranan = " ".join(parcalar[:-2]).strip('"')
     except:
-        await message.reply("Örnek: /stok_uyari \"NPK\" 100 gr")
+        await message.reply("Example: /stok_uyari \"NPK\" 100 gr")
         return
     
     stoklar = stok_oku()
     eslesenler = malzeme_bul(malzeme_aranan, stoklar)
     
     if not eslesenler:
-        await message.reply(f"❌ '{malzeme_aranan}' envanterde bulunamadı.")
+        await message.reply(f"❌ '{malzeme_aranan}' not found in inventory.")
         return
     
     if len(eslesenler) > 1:
         liste = "\n".join([f"• {item.get('Malzeme / Alet')}" for item in eslesenler[:5]])
-        await message.reply(f"⚠️ '{malzeme_aranan}' için birden fazla malzeme bulundu:\n\n{liste}\n\nLütfen tam adını yazın.")
+        await message.reply(f"⚠️ Multiple materials found for '{malzeme_aranan}':\n\n{liste}\n\nPlease use full name.")
         return
     
     malzeme_adi = eslesenler[0].get('Malzeme / Alet')
     stok_uyarilari[malzeme_adi] = {'esik': esik, 'birim': birim}
-    await message.reply(f"✅ Stok uyarısı eklendi:\n📦 {malzeme_adi}\n⚠️ {esik} {birim} altında uyarı verilecek.")
+    await message.reply(f"✅ Stock alert added:\n📦 {malzeme_adi}\n⚠️ Alert below {esik} {birim}")
 
 @dp.message_handler(commands=['stok_uyari_sil'])
 async def stok_uyari_sil(message: types.Message):
     param = message.get_args()
     if not param:
-        await message.reply("Örnek: /stok_uyari_sil NPK")
+        await message.reply("Example: /stok_uyari_sil NPK")
         return
     
     silinecekler = []
@@ -356,24 +349,24 @@ async def stok_uyari_sil(message: types.Message):
             silinecekler.append(malzeme)
     
     if not silinecekler:
-        await message.reply(f"❌ '{param}' için stok uyarısı bulunamadı.")
+        await message.reply(f"❌ No stock alert found for '{param}'.")
         return
     
     if len(silinecekler) > 1:
         liste = "\n".join([f"• {m}" for m in silinecekler])
-        await message.reply(f"⚠️ '{param}' için birden fazla uyarı bulundu:\n\n{liste}\n\nLütfen tam adını yazın.")
+        await message.reply(f"⚠️ Multiple alerts found for '{param}':\n\n{liste}\n\nPlease use full name.")
         return
     
     del stok_uyarilari[silinecekler[0]]
-    await message.reply(f"✅ {silinecekler[0]} için stok uyarısı kaldırıldı.")
+    await message.reply(f"✅ Stock alert removed for {silinecekler[0]}.")
 
 @dp.message_handler(commands=['stok_uyari_liste'])
 async def stok_uyari_liste(message: types.Message):
     if not stok_uyarilari:
-        await message.reply("📋 Aktif stok uyarısı yok.\n\n/stok_uyari \"NPK\" 100 gr ile ekleyebilirsin.")
+        await message.reply("📋 No active stock alerts.\n\n/stok_uyari \"NPK\" 100 gr to add one.")
         return
     
-    mesaj = "📋 **AKTİF STOK UYARILARI**\n\n"
+    mesaj = "📋 **ACTIVE STOCK ALERTS**\n\n"
     stoklar = stok_oku()
     for malzeme, veri in stok_uyarilari.items():
         kalan = "?"
@@ -381,37 +374,37 @@ async def stok_uyari_liste(message: types.Message):
             if item.get('Malzeme / Alet') == malzeme:
                 kalan = f"{item.get('Kalan Miktar')} {item.get('Birim')}"
                 break
-        mesaj += f"📦 {malzeme}\n   ⚠️ Eşik: {veri['esik']} {veri['birim']} | 📊 Güncel: {kalan}\n\n"
+        mesaj += f"📦 {malzeme}\n   ⚠️ Threshold: {veri['esik']} {veri['birim']} | 📊 Current: {kalan}\n\n"
     await message.reply(mesaj)
 
 @dp.message_handler(commands=['stok_uyari_temizle'])
 async def stok_uyari_temizle(message: types.Message):
     global stok_uyari_temizlik_onay
     if not stok_uyarilari:
-        await message.reply("❌ Silinecek stok uyarısı yok.")
+        await message.reply("❌ No stock alerts to delete.")
         return
     
     stok_uyari_temizlik_onay = True
-    await message.reply(f"⚠️ **DİKKAT!**\n\n"
-                       f"TÜM stok uyarıları silinecek ({len(stok_uyarilari)} uyarı).\n\n"
-                       f"**Bu işlem GERİ DÖNÜŞÜMSÜZDÜR!**\n\n"
-                       f"30 saniye içinde `/stok_uyari_evet` yazın.")
+    await message.reply(f"⚠️ **WARNING!**\n\n"
+                       f"ALL stock alerts will be deleted ({len(stok_uyarilari)} alerts).\n\n"
+                       f"**This action is IRREVERSIBLE!**\n\n"
+                       f"Type `/stok_uyari_evet` within 30 seconds to confirm.")
     
     await asyncio.sleep(30)
     if stok_uyari_temizlik_onay:
         stok_uyari_temizlik_onay = False
-        await message.reply("⏰ Silme iptal edildi.")
+        await message.reply("⏰ Deletion cancelled.")
 
 @dp.message_handler(commands=['stok_uyari_evet'])
 async def stok_uyari_evet(message: types.Message):
     global stok_uyari_temizlik_onay, stok_uyarilari
     if not stok_uyari_temizlik_onay:
-        await message.reply("❌ Silinecek uyarı yok veya süresi doldu. Önce /stok_uyari_temizle komutunu kullanın.")
+        await message.reply("❌ No pending deletion or time expired. Use /stok_uyari_temizle first.")
         return
     
     stok_uyarilari.clear()
     stok_uyari_temizlik_onay = False
-    await message.reply("✅ Tüm stok uyarıları silindi.")
+    await message.reply("✅ All stock alerts deleted.")
 
 # ==================== İSTATİSTİK ====================
 @dp.message_handler(commands=['istatistik'])
@@ -435,15 +428,15 @@ async def istatistik(message: types.Message):
         
         en_cok = sorted(malzeme_sayilari.items(), key=lambda x: x[1], reverse=True)[:5]
         
-        istatistik = f"📊 **GENEL İSTATİSTİK**\n\n"
-        istatistik += f"📝 Toplam işlem: {toplam_islem}\n\n"
-        istatistik += f"🔧 En çok kullanılan malzemeler:\n"
+        istatistik = f"📊 **STATISTICS**\n\n"
+        istatistik += f"📝 Total operations: {toplam_islem}\n\n"
+        istatistik += f"🔧 Most used materials:\n"
         for malzeme, sayi in en_cok:
-            istatistik += f"   • {malzeme}: {sayi} kez\n"
+            istatistik += f"   • {malzeme}: {sayi} times\n"
         
         await message.reply(istatistik)
     except Exception as e:
-        await message.reply(f"❌ İstatistik alınamadı: {e}")
+        await message.reply(f"❌ Statistics unavailable: {e}")
 
 # ==================== GÜNLÜK RAPOR ====================
 @dp.message_handler(commands=['rapor_gunluk'])
@@ -456,23 +449,23 @@ async def rapor_gunluk(message: types.Message):
         
         gunun_islemleri = [row for row in satirlar[1:] if len(row) >= 1 and row[0] == bugun]
         if not gunun_islemleri:
-            await message.reply(f"📅 **{bugun} GÜNLÜK RAPOR**\n\nBugün hiç işlem yapılmamış.")
+            await message.reply(f"📅 **{bugun} DAILY REPORT**\n\nNo operations today.")
             return
         
-        rapor = f"📅 **{bugun} GÜNLÜK RAPOR**\n\n"
-        rapor += f"📝 Toplam işlem: {len(gunun_islemleri)}\n\n"
+        rapor = f"📅 **{bugun} DAILY REPORT**\n\n"
+        rapor += f"📝 Total operations: {len(gunun_islemleri)}\n\n"
         for row in gunun_islemleri[:15]:
             rapor += f"• {row[1]}: {row[2][:50]}\n"
         await message.reply(rapor)
     except Exception as e:
-        await message.reply(f"❌ Rapor alınamadı: {e}")
+        await message.reply(f"❌ Report unavailable: {e}")
 
 # ==================== AYLIK RAPOR ====================
 @dp.message_handler(commands=['rapor_aylik'])
 async def rapor_aylik(message: types.Message):
     ay_param = message.get_args()
     if not ay_param:
-        await message.reply("Örnek: /rapor_aylik 05-2026")
+        await message.reply("Example: /rapor_aylik 05-2026")
         return
     
     try:
@@ -481,7 +474,7 @@ async def rapor_aylik(message: types.Message):
             satirlar = list(reader)
         
         if len(satirlar) <= 1:
-            await message.reply("❌ Henüz hiç kayıt yok.")
+            await message.reply("❌ No records yet.")
             return
         
         veriler = satirlar[1:]
@@ -497,7 +490,7 @@ async def rapor_aylik(message: types.Message):
                     ay_kayitlari.append(row)
         
         if not ay_kayitlari:
-            await message.reply(f"❌ {ay_param} ayında işlem bulunamadı.")
+            await message.reply(f"❌ No operations found for {ay_param}.")
             return
         
         toplam_islem = len(ay_kayitlari)
@@ -507,7 +500,7 @@ async def rapor_aylik(message: types.Message):
         miktar_sayac = 0
         
         for row in ay_kayitlari:
-            tur = row[1] if len(row) > 1 else "Bilinmiyor"
+            tur = row[1] if len(row) > 1 else "Unknown"
             islem_turleri[tur] = islem_turleri.get(tur, 0) + 1
             
             if len(row) > 2 and row[2] != "-":
@@ -522,29 +515,29 @@ async def rapor_aylik(message: types.Message):
                     except:
                         pass
         
-        en_cok_malzeme = max(malzeme_kullanimlari.items(), key=lambda x: x[1])[0] if malzeme_kullanimlari else "Yok"
+        en_cok_malzeme = max(malzeme_kullanimlari.items(), key=lambda x: x[1])[0] if malzeme_kullanimlari else "None"
         ortalama_miktar = toplam_miktar / miktar_sayac if miktar_sayac > 0 else 0
         
         ay_adi = ay_param
-        rapor = f"📊 **{ay_adi} AYLIK RAPORU**\n\n"
-        rapor += f"📝 Toplam işlem: {toplam_islem}\n"
-        rapor += f"🔧 En çok kullanılan malzeme: {en_cok_malzeme}\n"
-        rapor += f"📦 Ortalama kullanım: {ortalama_miktar:.1f} gr\n\n"
-        rapor += f"📋 İşlem türleri:\n"
+        rapor = f"📊 **{ay_adi} MONTHLY REPORT**\n\n"
+        rapor += f"📝 Total operations: {toplam_islem}\n"
+        rapor += f"🔧 Most used material: {en_cok_malzeme}\n"
+        rapor += f"📦 Average usage: {ortalama_miktar:.1f} gr\n\n"
+        rapor += f"📋 Operation types:\n"
         for tur, sayi in sorted(islem_turleri.items(), key=lambda x: x[1], reverse=True):
-            rapor += f"   • {tur}: {sayi} kez\n"
+            rapor += f"   • {tur}: {sayi} times\n"
         
         await message.reply(rapor)
         
     except Exception as e:
-        await message.reply(f"❌ Rapor alınamadı: {e}")
+        await message.reply(f"❌ Report unavailable: {e}")
 
 # ==================== GRAFİK ====================
 @dp.message_handler(commands=['grafik'])
 async def grafik(message: types.Message):
     param = message.get_args()
     if not param:
-        await message.reply("Örnek: /grafik NPK\n\nBir malzemenin stok geçmişini basit grafikle gösterir.")
+        await message.reply("Example: /grafik NPK\n\nShows stock usage history of a material.")
         return
     
     try:
@@ -558,36 +551,36 @@ async def grafik(message: types.Message):
                 kayitlar.append(row)
         
         if not kayitlar:
-            await message.reply(f"❌ '{param}' için geçmiş kayıt bulunamadı.")
+            await message.reply(f"❌ No history found for '{param}'.")
             return
         
         sonlar = kayitlar[-10:][::-1]
-        grafik = f"📊 **'{param.upper()}' STOK GRAFİĞİ (Son 10 kullanım)**\n\n"
+        grafik = f"📊 **'{param.upper()}' STOCK GRAPH (Last 10 uses)**\n\n"
         for row in sonlar:
             grafik += f"📅 {row[0]}: {row[2]}\n"
         
         await message.reply(grafik)
     except Exception as e:
-        await message.reply(f"❌ Grafik alınamadı: {e}")
+        await message.reply(f"❌ Graph unavailable: {e}")
 
 # ==================== HATIRLATMA ====================
 @dp.message_handler(commands=['hatirlat'])
 async def hatirlat(message: types.Message):
     param = message.get_args()
     if not param:
-        await message.reply("Örnek: /hatirlat 30-07-2026 10:00 Sula")
+        await message.reply("Example: /hatirlat 30-07-2026 10:00 Water")
         return
     
     parcalar = param.split(maxsplit=2)
     if len(parcalar) < 3:
-        await message.reply("Format: /hatirlat gun-ay-yil saat islem")
+        await message.reply("Format: /hatirlat dd-mm-yyyy hour:min task")
         return
     
     tarih, saat, islem = parcalar
     if hatirlatma_ekle(tarih, saat, islem):
-        await message.reply(f"✅ Hatırlatma eklendi!\n📅 {tarih} {saat}\n📝 {islem}")
+        await message.reply(f"✅ Reminder added!\n📅 {tarih} {saat}\n📝 {islem}")
     else:
-        await message.reply("❌ Hata.")
+        await message.reply("❌ Error.")
 
 @dp.message_handler(commands=['hatirlatmalar'])
 async def list_hatirlatmalar(message: types.Message):
@@ -597,7 +590,7 @@ async def list_hatirlatmalar(message: types.Message):
             satirlar = list(reader)
         
         if len(satirlar) <= 1:
-            await message.reply("Henüz hatırlatma yok. /hatirlat ile ekleyebilirsin.")
+            await message.reply("No reminders yet. Use /hatirlat to add one.")
             return
         
         bekleyenler = []
@@ -606,21 +599,21 @@ async def list_hatirlatmalar(message: types.Message):
                 bekleyenler.append((i, row))
         
         if not bekleyenler:
-            await message.reply("✅ Bekleyen hatırlatma yok.")
+            await message.reply("✅ No pending reminders.")
             return
         
-        mesaj = "📅 **BEKLEYEN HATIRLATMALAR (ID ile)**\n\n"
+        mesaj = "📅 **PENDING REMINDERS (with ID)**\n\n"
         for i, row in bekleyenler:
             mesaj += f"**ID: {i}** | {row[0]} {row[1]} - {row[2]}\n"
         await message.reply(mesaj[:4000])
     except:
-        await message.reply("Dosya okuma hatası. reminders.csv dosyası var mı?")
+        await message.reply("File read error. Does reminders.csv exist?")
 
 @dp.message_handler(commands=['hatirlat_sil'])
 async def hatirlat_sil(message: types.Message):
     param = message.get_args()
     if not param:
-        await message.reply("Örnek: /hatirlat_sil 1\n\nID'yi /hatirlatmalar ile görebilirsin.")
+        await message.reply("Example: /hatirlat_sil 1\n\nGet ID from /hatirlatmalar")
         return
     
     try:
@@ -629,12 +622,12 @@ async def hatirlat_sil(message: types.Message):
             satirlar = list(reader)
         
         if len(satirlar) <= 1:
-            await message.reply("❌ Hatırlatma yok.")
+            await message.reply("❌ No reminders.")
             return
         
         idx = int(param)
         if idx < 1 or idx >= len(satirlar):
-            await message.reply("❌ Geçersiz ID.")
+            await message.reply("❌ Invalid ID.")
             return
         
         silinen = satirlar.pop(idx)
@@ -642,9 +635,9 @@ async def hatirlat_sil(message: types.Message):
             writer = csv.writer(f)
             writer.writerows(satirlar)
         
-        await message.reply(f"✅ Hatırlatma silindi:\n{silinen[0]} {silinen[1]} - {silinen[2]}")
+        await message.reply(f"✅ Reminder deleted:\n{silinen[0]} {silinen[1]} - {silinen[2]}")
     except:
-        await message.reply("❌ Hata oluştu.")
+        await message.reply("❌ Error occurred.")
 
 # ==================== KAYDET ====================
 @dp.message_handler(commands=['kaydet'])
@@ -652,7 +645,7 @@ async def kaydet(message: types.Message):
     global son_kayit_geri_al
     islem = message.get_args()
     if not islem:
-        await message.reply("Örnek: /kaydet 5 gr NPK veya /kaydet Sera kuruldu")
+        await message.reply("Example: /kaydet 5 gr NPK or /kaydet Greenhouse installed")
         return
     
     parcalar = islem.split()
@@ -662,22 +655,22 @@ async def kaydet(message: types.Message):
             birim = parcalar[1]
             malzeme_aranan = " ".join(parcalar[2:])
         except:
-            history_ekle("İşlem", islem, "-", "-")
-            await message.reply(f"✅ İşlem kaydedildi:\n📝 {islem}")
+            history_ekle("Note", islem, "-", "-")
+            await message.reply(f"✅ Note saved:\n📝 {islem}")
             return
         
         stoklar = stok_oku()
         eslesenler = malzeme_bul(malzeme_aranan, stoklar)
         
         if not eslesenler:
-            history_ekle("İşlem", islem, "-", "-")
-            await message.reply(f"✅ İşlem kaydedildi (stokta bulunamadı):\n📝 {islem}")
+            history_ekle("Note", islem, "-", "-")
+            await message.reply(f"✅ Note saved (material not found):\n📝 {islem}")
             return
         
         if len(eslesenler) > 1:
             liste = "\n".join([f"• {item.get('Malzeme / Alet')}" for item in eslesenler[:5]])
-            await message.reply(f"⚠️ '{malzeme_aranan}' için birden fazla malzeme bulundu:\n\n{liste}\n\nLütfen tam adını yazın.\n\nİşlem yine de kaydedildi.")
-            history_ekle("İşlem", islem, "-", "-")
+            await message.reply(f"⚠️ Multiple materials found for '{malzeme_aranan}':\n\n{liste}\n\nPlease use full name.\n\nNote still saved.")
+            history_ekle("Note", islem, "-", "-")
             return
         
         item = eslesenler[0]
@@ -696,8 +689,8 @@ async def kaydet(message: types.Message):
                     'birim': birim
                 }
                 
-                history_ekle("Kullanım", malzeme_adi, miktar, birim)
-                await message.reply(f"✅ {miktar:.1f} {birim} {malzeme_adi} kullanıldı. (Stok bol, tükenmez)")
+                history_ekle("Usage", malzeme_adi, miktar, birim)
+                await message.reply(f"✅ {miktar:.1f} {birim} {malzeme_adi} used. (Unlimited stock)")
                 return
             
             kalan = float(kalan_str)
@@ -716,26 +709,26 @@ async def kaydet(message: types.Message):
                     'birim': birim
                 }
                 
-                history_ekle("Kullanım", malzeme_adi, miktar, birim)
+                history_ekle("Usage", malzeme_adi, miktar, birim)
                 
                 uyari_var, esik, uyari_birimi = stok_uyari_kontrol(malzeme_adi, yeni_kalan, birim)
                 if uyari_var:
-                    await message.reply(f"✅ {miktar:.1f} {birim} {malzeme_adi} kullanıldı.\n📊 Kalan: {yeni_kalan:.1f} {birim}\n\n⚠️ **STOK UYARISI!** {malzeme_adi} {esik} {uyari_birimi} altına düştü!")
+                    await message.reply(f"✅ {miktar:.1f} {birim} {malzeme_adi} used.\n📊 Remaining: {yeni_kalan:.1f} {birim}\n\n⚠️ **STOCK ALERT!** {malzeme_adi} below {esik} {uyari_birimi}!")
                 else:
-                    await message.reply(f"✅ {miktar:.1f} {birim} {malzeme_adi} kullanıldı.\n📊 Kalan: {yeni_kalan:.1f} {birim}")
+                    await message.reply(f"✅ {miktar:.1f} {birim} {malzeme_adi} used.\n📊 Remaining: {yeni_kalan:.1f} {birim}")
                 return
             else:
-                await message.reply(f"❌ Yetersiz stok! Kalan: {kalan:.1f} {birim}\n\nİşlem yine de kaydedildi.")
-                history_ekle("İşlem", islem, "-", "-")
+                await message.reply(f"❌ Insufficient stock! Remaining: {kalan:.1f} {birim}\n\nNote still saved.")
+                history_ekle("Note", islem, "-", "-")
                 return
         except Exception as e:
-            await message.reply(f"❌ Hata: {e}\n\nİşlem yine de kaydedildi.")
-            history_ekle("İşlem", islem, "-", "-")
+            await message.reply(f"❌ Error: {e}\n\nNote still saved.")
+            history_ekle("Note", islem, "-", "-")
             return
     
     else:
-        history_ekle("İşlem", islem, "-", "-")
-        await message.reply(f"✅ İşlem kaydedildi:\n📝 {islem}")
+        history_ekle("Note", islem, "-", "-")
+        await message.reply(f"✅ Note saved:\n📝 {islem}")
         return
 
 # ==================== KAYDET GERİ AL (ONAYLI) ====================
@@ -750,68 +743,68 @@ async def kaydet_geri_al(message: types.Message):
             satirlar = list(reader)
         
         if len(satirlar) <= 1:
-            await message.reply("❌ Geri alınacak kayıt yok.")
+            await message.reply("❌ No records to undo.")
             return
         
         basliklar = satirlar[0]
         veriler = satirlar[1:]
         
         if not veriler:
-            await message.reply("❌ Geri alınacak kayıt yok.")
+            await message.reply("❌ No records to undo.")
             return
         
         if param and param.isdigit():
             kayit_id = int(param)
             if kayit_id < 1 or kayit_id > len(veriler):
-                await message.reply(f"❌ Geçersiz ID. 1 ile {len(veriler)} arasında bir sayı girin.\n\nID'leri /gecmis ile görebilirsin.")
+                await message.reply(f"❌ Invalid ID. Enter 1-{len(veriler)}.\n\nUse /gecmis to see IDs.")
                 return
             
             idx = kayit_id - 1
             silinecek_kayit_id = (idx, veriler[idx], kayit_id)
             
-            await message.reply(f"⚠️ **DİKKAT!**\n\n"
-                               f"ID: {kayit_id} numaralı işlem silinecek:\n"
+            await message.reply(f"⚠️ **WARNING!**\n\n"
+                               f"Record ID: {kayit_id} will be deleted:\n"
                                f"📅 {veriler[idx][0]} - {veriler[idx][1]}\n"
                                f"📝 {veriler[idx][2][:200]}\n\n"
-                               f"**Bu işlem GERİ DÖNÜŞÜMSÜZDÜR!**\n\n"
-                               f"30 saniye içinde `/kaydet_evet` yazın.")
+                               f"**This action is IRREVERSIBLE!**\n\n"
+                               f"Type `/kaydet_evet` within 30 seconds to confirm.")
             
             await asyncio.sleep(30)
             if silinecek_kayit_id == (idx, veriler[idx], kayit_id):
                 silinecek_kayit_id = None
-                await message.reply("⏰ Silme iptal edildi.")
+                await message.reply("⏰ Deletion cancelled.")
             return
         
         elif param and param.lower() == 'hepsi':
             silinecek_kayit_hepsi = veriler.copy()
-            await message.reply(f"⚠️ **DİKKAT!**\n\n"
-                               f"TÜM geçmiş kayıtları silinecek ({len(veriler)} kayıt).\n\n"
-                               f"**Bu işlem GERİ DÖNÜŞÜMSÜZDÜR!**\n\n"
-                               f"30 saniye içinde `/kaydet_evet` yazın.")
+            await message.reply(f"⚠️ **WARNING!**\n\n"
+                               f"ALL history records will be deleted ({len(veriler)} records).\n\n"
+                               f"**This action is IRREVERSIBLE!**\n\n"
+                               f"Type `/kaydet_evet` within 30 seconds to confirm.")
             await asyncio.sleep(30)
             if silinecek_kayit_hepsi:
                 silinecek_kayit_hepsi = None
-                await message.reply("⏰ Silme iptal edildi.")
+                await message.reply("⏰ Deletion cancelled.")
             return
         
         son_islem = veriler[-1]
         kayit_id = len(veriler)
         silinecek_kayit_id = (len(veriler)-1, son_islem, kayit_id)
         
-        await message.reply(f"⚠️ **DİKKAT!**\n\n"
-                           f"SON işlem silinecek:\n"
+        await message.reply(f"⚠️ **WARNING!**\n\n"
+                           f"LAST record will be deleted:\n"
                            f"📅 {son_islem[0]} - {son_islem[1]}\n"
                            f"📝 {son_islem[2][:200]}\n\n"
-                           f"**Bu işlem GERİ DÖNÜŞÜMSÜZDÜR!**\n\n"
-                           f"30 saniye içinde `/kaydet_evet` yazın.")
+                           f"**This action is IRREVERSIBLE!**\n\n"
+                           f"Type `/kaydet_evet` within 30 seconds to confirm.")
         
         await asyncio.sleep(30)
         if silinecek_kayit_id == (len(veriler)-1, son_islem, kayit_id):
             silinecek_kayit_id = None
-            await message.reply("⏰ Silme iptal edildi.")
+            await message.reply("⏰ Deletion cancelled.")
         
     except Exception as e:
-        await message.reply(f"❌ Hata: {e}")
+        await message.reply(f"❌ Error: {e}")
 
 @dp.message_handler(commands=['kaydet_evet'])
 async def kaydet_evet(message: types.Message):
@@ -823,7 +816,7 @@ async def kaydet_evet(message: types.Message):
             satirlar = list(reader)
         
         if len(satirlar) <= 1:
-            await message.reply("❌ Silinecek kayıt yok.")
+            await message.reply("❌ No records to delete.")
             silinecek_kayit_id = None
             silinecek_kayit_hepsi = None
             return
@@ -835,7 +828,7 @@ async def kaydet_evet(message: types.Message):
             with open('history.csv', 'w', encoding='utf-8-sig', newline='') as f:
                 writer = csv.writer(f)
                 writer.writerow(basliklar)
-            await message.reply(f"✅ Tüm geçmiş kayıtları silindi.")
+            await message.reply(f"✅ All history records deleted.")
             son_kayit_geri_al = None
             silinecek_kayit_hepsi = None
             return
@@ -845,7 +838,7 @@ async def kaydet_evet(message: types.Message):
             if idx < len(veriler):
                 veriler.pop(idx)
                 
-                if son_kayit_geri_al and son_kayit_geri_al.get('malzeme') and silinen_islem[1] == "Kullanım":
+                if son_kayit_geri_al and son_kayit_geri_al.get('malzeme') and silinen_islem[1] == "Usage":
                     stoklar = stok_oku()
                     for item in stoklar:
                         if son_kayit_geri_al['malzeme'].lower() in item.get('Malzeme / Alet', '').lower():
@@ -864,15 +857,15 @@ async def kaydet_evet(message: types.Message):
                     writer.writerow(basliklar)
                     writer.writerows(veriler)
                 
-                await message.reply(f"✅ ID {kayit_id} numaralı işlem silindi:\n📅 {silinen_islem[0]} - {silinen_islem[1]}\n📝 {silinen_islem[2][:200]}")
+                await message.reply(f"✅ Record ID {kayit_id} deleted:\n📅 {silinen_islem[0]} - {silinen_islem[1]}\n📝 {silinen_islem[2][:200]}")
                 silinecek_kayit_id = None
                 return
         
-        await message.reply("❌ Silinecek kayıt bulunamadı.")
+        await message.reply("❌ No record found to delete.")
         silinecek_kayit_id = None
         
     except Exception as e:
-        await message.reply(f"❌ Hata: {e}")
+        await message.reply(f"❌ Error: {e}")
         silinecek_kayit_id = None
         silinecek_kayit_hepsi = None
 
@@ -883,21 +876,21 @@ async def stok(message: types.Message):
     stoklar = stok_oku()
     
     if not stoklar:
-        await message.reply("❌ Stok dosyası okunamadı veya boş.")
+        await message.reply("❌ Stock file cannot be read or empty.")
         return
     
     if param:
         eslesenler = malzeme_bul(param, stoklar)
         
         if not eslesenler:
-            await message.reply(f"❌ '{param}' ile eşleşen malzeme bulunamadı.")
+            await message.reply(f"❌ '{param}' not found.")
             return
         
         if len(eslesenler) == 1:
             item = eslesenler[0]
             cevap = f"📦 **{item.get('Malzeme / Alet')}**\n"
-            cevap += f"📊 Kalan: {item.get('Kalan Miktar')} {item.get('Birim')}\n"
-            cevap += f"📝 Görevi: {item.get('Görevi / Not', '-')}\n\n"
+            cevap += f"📊 Remaining: {item.get('Kalan Miktar')} {item.get('Birim')}\n"
+            cevap += f"📝 Task: {item.get('Görevi / Not', '-')}\n\n"
             
             try:
                 with open('history.csv', 'r', encoding='utf-8-sig') as f:
@@ -910,22 +903,22 @@ async def stok(message: types.Message):
                         kayitlar.append(row)
                 
                 if kayitlar:
-                    cevap += "📜 **TÜM KULLANIMLAR:**\n"
+                    cevap += "📜 **ALL USAGES:**\n"
                     for row in kayitlar:
                         cevap += f"   • {row[0]}: {row[2]}\n"
                 else:
-                    cevap += "📜 **Geçmiş kullanım kaydı yok.**"
+                    cevap += "📜 **No usage history.**"
             except:
-                cevap += "📜 History okunamadı."
+                cevap += "📜 History unavailable."
             
             await message.reply(cevap)
         else:
-            cevap = f"🔍 **'{param}' için bulunan malzemeler:**\n\n"
+            cevap = f"🔍 **Materials matching '{param}':**\n\n"
             for item in eslesenler[:10]:
                 cevap += f"• {item.get('Malzeme / Alet')}: {item.get('Kalan Miktar')} {item.get('Birim')}\n"
             await message.reply(cevap)
     else:
-        mesaj = "📦 **ENVANTER LİSTESİ**\n\n"
+        mesaj = "📦 **INVENTORY LIST**\n\n"
         for item in stoklar[:30]:
             mesaj += f"• {item.get('Malzeme / Alet')}: {item.get('Kalan Miktar')} {item.get('Birim')}\n"
         await message.reply(mesaj)
@@ -935,12 +928,12 @@ async def stok(message: types.Message):
 async def ekle_envanter(message: types.Message):
     param = message.get_args()
     if not param:
-        await message.reply("Örnek: /ekle NPK;1000;gr;Gübre\n\nFormat: Ad;Miktar;Birim;Görevi")
+        await message.reply("Example: /ekle NPK;1000;gr;Fertilizer\n\nFormat: Name;Amount;Unit;Task")
         return
     
     parcalar = param.split(';')
     if len(parcalar) < 3:
-        await message.reply("Format: Ad;Miktar;Birim;Görev\nÖrnek: YeniGubre;500;gr;Deneme")
+        await message.reply("Format: Name;Amount;Unit;Task\nExample: NewFertilizer;500;gr;Test")
         return
     
     malzeme_adi = parcalar[0].strip()
@@ -952,7 +945,7 @@ async def ekle_envanter(message: types.Message):
     
     for item in stoklar:
         if item.get('Malzeme / Alet', '').lower() == malzeme_adi.lower():
-            await message.reply(f"❌ '{malzeme_adi}' zaten envanterde var.")
+            await message.reply(f"❌ '{malzeme_adi}' already exists in inventory.")
             return
     
     if birim.lower() in ['ml', 'l', 'litre']:
@@ -975,10 +968,10 @@ async def ekle_envanter(message: types.Message):
     stoklar.append(yeni_kayit)
     
     if stok_kaydet(stoklar):
-        await message.reply(f"✅ **'{malzeme_adi}'** envantere eklendi!\n\n📦 Miktar: {miktar} {birim}\n📝 Görevi: {gorev}")
-        history_ekle("ENVANTERE EKLENDİ", malzeme_adi, miktar, birim)
+        await message.reply(f"✅ **'{malzeme_adi}'** added to inventory!\n\n📦 Amount: {miktar} {birim}\n📝 Task: {gorev}")
+        history_ekle("ADDED TO INVENTORY", malzeme_adi, miktar, birim)
     else:
-        await message.reply("❌ Ekleme sırasında hata oluştu.")
+        await message.reply("❌ Error while adding.")
 
 # ==================== SİLME ====================
 @dp.message_handler(commands=['sil'])
@@ -986,36 +979,36 @@ async def sil_stok(message: types.Message):
     global silinecek_malzeme
     param = message.get_args()
     if not param:
-        await message.reply("Örnek: /sil Test")
+        await message.reply("Example: /sil Test")
         return
     
     stoklar = stok_oku()
     eslesenler = malzeme_bul(param, stoklar)
     
     if not eslesenler:
-        await message.reply(f"❌ '{param}' ile eşleşen malzeme bulunamadı.")
+        await message.reply(f"❌ '{param}' not found.")
         return
     
     if len(eslesenler) > 1:
         liste = "\n".join([f"• {item.get('Malzeme / Alet')}" for item in eslesenler[:5]])
-        await message.reply(f"⚠️ '{param}' için birden fazla malzeme bulundu:\n\n{liste}\n\nLütfen tam adını yazın.")
+        await message.reply(f"⚠️ Multiple materials found for '{param}':\n\n{liste}\n\nPlease use full name.")
         return
     
     silinecek_malzeme = eslesenler[0]
-    await message.reply(f"⚠️ **{silinecek_malzeme.get('Malzeme / Alet')}** silinsin mi?\n\n"
-                       f"📊 Miktar: {silinecek_malzeme.get('Kalan Miktar')} {silinecek_malzeme.get('Birim')}\n\n"
-                       f"Bu işlem GERİ DÖNÜŞÜMSÜZDÜR!\n\n"
-                       f"30 saniye içinde `/evet` yazın.")
+    await message.reply(f"⚠️ **{silinecek_malzeme.get('Malzeme / Alet')}** will be deleted?\n\n"
+                       f"📊 Amount: {silinecek_malzeme.get('Kalan Miktar')} {silinecek_malzeme.get('Birim')}\n\n"
+                       f"**This action is IRREVERSIBLE!**\n\n"
+                       f"Type `/evet` within 30 seconds to confirm.")
     await asyncio.sleep(30)
     if silinecek_malzeme:
         silinecek_malzeme = None
-        await message.reply("⏰ Silme iptal edildi.")
+        await message.reply("⏰ Deletion cancelled.")
 
 @dp.message_handler(commands=['evet'])
 async def evet_sil(message: types.Message):
     global silinecek_malzeme
     if not silinecek_malzeme:
-        await message.reply("❌ Silinecek malzeme yok. Önce /sil komutunu kullanın.")
+        await message.reply("❌ No material to delete. Use /sil first.")
         return
     
     stoklar = stok_oku()
@@ -1026,10 +1019,10 @@ async def evet_sil(message: types.Message):
     yeni_stoklar = [item for item in stoklar if item.get('Malzeme / Alet') != malzeme_adi]
     
     if stok_kaydet(yeni_stoklar):
-        await message.reply(f"✅ **'{malzeme_adi}'** envanterden silindi.\n\n📊 Miktar: {miktar} {birim}")
-        history_ekle("ENVANTERDEN SİLİNDİ", malzeme_adi, miktar, birim)
+        await message.reply(f"✅ **'{malzeme_adi}'** deleted from inventory.\n\n📊 Amount: {miktar} {birim}")
+        history_ekle("DELETED FROM INVENTORY", malzeme_adi, miktar, birim)
     else:
-        await message.reply("❌ Silme işlemi sırasında hata oluştu.")
+        await message.reply("❌ Error during deletion.")
     
     silinecek_malzeme = None
 
@@ -1038,32 +1031,32 @@ async def evet_sil(message: types.Message):
 async def ph_ekle(message: types.Message):
     param = message.get_args()
     if not param:
-        await message.reply("Örnek: /ph_ekle 1 6.5\n\nNot eklemek için: /ph_ekle 1 6.5 Çamur testi")
+        await message.reply("Example: /ph_ekle 1 6.5\n\nAdd note: /ph_ekle 1 6.5 Mud test")
         return
     
     parcalar = param.split(maxsplit=2)
     if len(parcalar) < 2:
-        await message.reply("Format: /ph_ekle teneke_no pH [not]")
+        await message.reply("Format: /ph_ekle can_no ph [note]")
         return
     
     teneke = parcalar[0]
     ph = parcalar[1]
-    not_metni = parcalar[2] if len(parcalar) > 2 else "Bot ile eklendi"
+    not_metni = parcalar[2] if len(parcalar) > 2 else "Added by bot"
     
     try:
         with open('ph_records.csv', 'a', encoding='utf-8-sig', newline='') as f:
             writer = csv.writer(f)
             writer.writerow([tarih_format(), teneke, "-", ph, not_metni])
-        await message.reply(f"✅ pH kaydı eklendi!\n📅 {tarih_format()} - Teneke {teneke} - pH {ph}\n📝 {not_metni}")
+        await message.reply(f"✅ pH record added!\n📅 {tarih_format()} - Can {teneke} - pH {ph}\n📝 {not_metni}")
     except Exception as e:
-        await message.reply(f"❌ Hata: {e}")
+        await message.reply(f"❌ Error: {e}")
 
 # ==================== pH SORGULA ====================
 @dp.message_handler(commands=['ph'])
 async def ph_sorgula(message: types.Message):
     param = message.get_args()
     if not param:
-        await message.reply("Örnek: /ph 1 - Son ölçüm\n/ph 1 hepsi - Tüm ölçümler")
+        await message.reply("Example: /ph 1 - Latest pH\n/ph 1 hepsi - All pH records")
         return
     
     parcalar = param.split()
@@ -1076,31 +1069,31 @@ async def ph_sorgula(message: types.Message):
             kayitlar = [row for row in reader if row.get('Teneke_No', '').strip() == teneke_no]
         
         if not kayitlar:
-            await message.reply(f"❌ Teneke {teneke_no} için pH kaydı yok.")
+            await message.reply(f"❌ No pH records for can {teneke_no}.")
             return
         
         if tumu:
-            mesaj = f"📊 **Teneke {teneke_no} - TÜM pH ÖLÇÜMLERİ**\n\n"
+            mesaj = f"📊 **Can {teneke_no} - ALL pH RECORDS**\n\n"
             for k in sorted(kayitlar, key=lambda x: x.get('Tarih', ''), reverse=True):
                 not_str = f" - {k.get('Not', '')}" if k.get('Not') else ""
                 bolge_str = f" ({k.get('Bolge', '-')})" if k.get('Bolge') and k.get('Bolge') != '-' else ""
                 mesaj += f"📅 {k['Tarih']}: pH {k['pH']}{bolge_str}{not_str}\n"
                 if len(mesaj) > 3800:
-                    mesaj += "\n*Devamı için /ph 1 devam*"
+                    mesaj += "\n*Continue with /ph 1 devam*"
                     break
             await message.reply(mesaj)
         else:
             en_son = max(kayitlar, key=lambda x: x.get('Tarih', ''))
-            not_str = f"\n📝 Not: {en_son.get('Not', '-')}" if en_son.get('Not') else ""
-            bolge_str = f"📍 Bölge: {en_son.get('Bolge', '-')}\n" if en_son.get('Bolge') and en_son.get('Bolge') != '-' else ""
+            not_str = f"\n📝 Note: {en_son.get('Not', '-')}" if en_son.get('Not') else ""
+            bolge_str = f"📍 Region: {en_son.get('Bolge', '-')}\n" if en_son.get('Bolge') and en_son.get('Bolge') != '-' else ""
             await message.reply(
-                f"📊 **Teneke {teneke_no} - Son pH**\n"
+                f"📊 **Can {teneke_no} - Latest pH**\n"
                 f"📅 {en_son['Tarih']}\n"
                 f"🔬 pH: {en_son['pH']}\n"
                 f"{bolge_str}{not_str}"
             )
     except Exception as e:
-        await message.reply(f"Hata: {e}")
+        await message.reply(f"Error: {e}")
 
 # ==================== TÜM TENEKELERİN TÜM pH ====================
 @dp.message_handler(commands=['ph_tumu'])
@@ -1111,27 +1104,27 @@ async def ph_tumu(message: types.Message):
             tum_kayitlar = list(reader)
         
         if not tum_kayitlar:
-            await message.reply("❌ Hiç pH kaydı yok.")
+            await message.reply("❌ No pH records.")
             return
         
         tenekeler = {}
         for row in tum_kayitlar:
-            teneke = row.get('Teneke_No', 'Bilinmiyor')
+            teneke = row.get('Teneke_No', 'Unknown')
             if teneke not in tenekeler:
                 tenekeler[teneke] = []
             tenekeler[teneke].append(row)
         
-        cevap = "📊 **TÜM TENEKELER - TÜM pH ÖLÇÜMLERİ**\n\n"
+        cevap = "📊 **ALL CANS - ALL pH RECORDS**\n\n"
         
         for teneke in sorted(tenekeler.keys(), key=lambda x: int(x) if x.isdigit() else 0):
-            cevap += f"🔹 **Teneke {teneke}**\n"
+            cevap += f"🔹 **Can {teneke}**\n"
             kayitlar = sorted(tenekeler[teneke], key=lambda x: x.get('Tarih', ''), reverse=True)
             for k in kayitlar[:10]:
                 not_str = f" - {k.get('Not', '')}" if k.get('Not') else ""
                 bolge_str = f" ({k.get('Bolge', '-')})" if k.get('Bolge') and k.get('Bolge') != '-' else ""
                 cevap += f"   📅 {k['Tarih']}: pH {k['pH']}{bolge_str}{not_str}\n"
             if len(kayitlar) > 10:
-                cevap += f"   *Toplam {len(kayitlar)} kayıt var*\n"
+                cevap += f"   *Total {len(kayitlar)} records*\n"
             cevap += "\n"
             
             if len(cevap) > 3800:
@@ -1142,7 +1135,7 @@ async def ph_tumu(message: types.Message):
             await message.reply(cevap)
             
     except Exception as e:
-        await message.reply(f"❌ Hata: {e}")
+        await message.reply(f"❌ Error: {e}")
 
 # ==================== pH SİLME ====================
 @dp.message_handler(commands=['ph_sil'])
@@ -1150,7 +1143,7 @@ async def ph_sil(message: types.Message):
     global silinecek_ph_kayitlari
     param = message.get_args()
     if not param:
-        await message.reply("Örnek:\n/ph_sil 1 - Son kaydı sil\n/ph_sil 1 hepsi - Tüm kayıtları sil\n/ph_sil 1 19-05-2026 - Tarihli kaydı sil")
+        await message.reply("Example:\n/ph_sil 1 - Delete last pH\n/ph_sil 1 hepsi - Delete all pH records\n/ph_sil 1 19-05-2026 - Delete by date")
         return
     
     parcalar = param.split()
@@ -1162,7 +1155,7 @@ async def ph_sil(message: types.Message):
             satirlar = list(reader)
         
         if len(satirlar) <= 1:
-            await message.reply("❌ Silinecek kayıt yok.")
+            await message.reply("❌ No records to delete.")
             return
         
         basliklar = satirlar[0]
@@ -1174,16 +1167,19 @@ async def ph_sil(message: types.Message):
                 teneke_kayitlari.append((i, row))
         
         if not teneke_kayitlari:
-            await message.reply(f"❌ Teneke {teneke_no} için pH kaydı bulunamadı.")
+            await message.reply(f"❌ No pH records for can {teneke_no}.")
             return
         
         if len(parcalar) > 1 and parcalar[1].lower() == 'hepsi':
             silinecek_ph_kayitlari = teneke_kayitlari
-            await message.reply(f"⚠️ **Teneke {teneke_no} için TÜM pH kayıtları** silinecek ({len(teneke_kayitlari)} kayıt).\n\nBu işlem GERİ DÖNÜŞÜMSÜZDÜR!\n\n30 saniye içinde `/ph_evet` yazın.")
+            await message.reply(f"⚠️ **WARNING!**\n\n"
+                               f"ALL pH records for can {teneke_no} will be deleted ({len(teneke_kayitlari)} records).\n\n"
+                               f"**This action is IRREVERSIBLE!**\n\n"
+                               f"Type `/ph_evet` within 30 seconds to confirm.")
             await asyncio.sleep(30)
             if silinecek_ph_kayitlari == teneke_kayitlari:
                 silinecek_ph_kayitlari = None
-                await message.reply("⏰ Silme iptal edildi.")
+                await message.reply("⏰ Deletion cancelled.")
             return
         
         if len(parcalar) > 1:
@@ -1195,7 +1191,7 @@ async def ph_sil(message: types.Message):
                     break
             
             if not bulunan:
-                await message.reply(f"❌ Teneke {teneke_no} için {tarih} tarihinde kayıt bulunamadı.")
+                await message.reply(f"❌ No record found for can {teneke_no} on {tarih}.")
                 return
             
             silinen = veriler.pop(bulunan[0])
@@ -1204,7 +1200,7 @@ async def ph_sil(message: types.Message):
                 writer.writerow(basliklar)
                 writer.writerows(veriler)
             
-            await message.reply(f"✅ pH kaydı silindi:\n📅 {silinen[0]} - Teneke {silinen[1]} - pH {silinen[3]}")
+            await message.reply(f"✅ pH record deleted:\n📅 {silinen[0]} - Can {silinen[1]} - pH {silinen[3]}")
             return
         
         son_kayit = teneke_kayitlari[-1]
@@ -1215,16 +1211,16 @@ async def ph_sil(message: types.Message):
             writer.writerow(basliklar)
             writer.writerows(veriler)
         
-        await message.reply(f"✅ Son pH kaydı silindi:\n📅 {son_kayit[1][0]} - Teneke {son_kayit[1][1]} - pH {son_kayit[1][3]}")
+        await message.reply(f"✅ Latest pH record deleted:\n📅 {son_kayit[1][0]} - Can {son_kayit[1][1]} - pH {son_kayit[1][3]}")
         
     except Exception as e:
-        await message.reply(f"❌ Hata: {e}")
+        await message.reply(f"❌ Error: {e}")
 
 @dp.message_handler(commands=['ph_evet'])
 async def ph_evet(message: types.Message):
     global silinecek_ph_kayitlari
     if not silinecek_ph_kayitlari:
-        await message.reply("❌ Silinecek kayıt yok. Önce /ph_sil komutunu kullanın.")
+        await message.reply("❌ No records to delete. Use /ph_sil first.")
         return
     
     try:
@@ -1244,10 +1240,10 @@ async def ph_evet(message: types.Message):
             writer.writerow(basliklar)
             writer.writerows(veriler)
         
-        await message.reply(f"✅ Teneke {silinecek_ph_kayitlari[0][1][1]} için TÜM pH kayıtları silindi.")
+        await message.reply(f"✅ All pH records for can {silinecek_ph_kayitlari[0][1][1]} deleted.")
         silinecek_ph_kayitlari = None
     except Exception as e:
-        await message.reply(f"❌ Hata: {e}")
+        await message.reply(f"❌ Error: {e}")
         silinecek_ph_kayitlari = None
 
 # ==================== GEÇMİŞ ====================
@@ -1260,14 +1256,14 @@ async def gecmis(message: types.Message):
             satirlar = list(reader)
         
         if len(satirlar) <= 1:
-            await message.reply("📜 Henüz hiç kayıt yok.")
+            await message.reply("📜 No records yet.")
             return
         
         veriler = satirlar[1:]
         
         if not param:
             sonlar = veriler[-10:][::-1]
-            mesaj = "📜 **SON 10 İŞLEM (ID ile)**\n\n"
+            mesaj = "📜 **LAST 10 RECORDS (with ID)**\n\n"
             for i, row in enumerate(sonlar, 1):
                 kayit_id = len(veriler) - i + 1
                 mesaj += f"**ID: {kayit_id}** | 📅 {row[0]} - {row[1]}\n   {row[2][:100]}\n\n"
@@ -1276,7 +1272,7 @@ async def gecmis(message: types.Message):
         elif param.lower() == 'hepsi':
             for i in range(0, len(veriler), 10):
                 blok = veriler[i:i+10]
-                mesaj = "📜 **TÜM İŞLEMLER (ID ile)**\n\n"
+                mesaj = "📜 **ALL RECORDS (with ID)**\n\n"
                 for j, row in enumerate(blok):
                     kayit_id = i + j + 1
                     mesaj += f"**ID: {kayit_id}** | 📅 {row[0]} - {row[1]}\n   {row[2][:100]}\n\n"
@@ -1296,16 +1292,16 @@ async def gecmis(message: types.Message):
                         tarih_kayitlari = [(i+1, row) for i, row in enumerate(veriler) if row[0] == ters_param]
             
             if not tarih_kayitlari:
-                await message.reply(f"❌ {param} tarihinde kayıt bulunamadı.\n\nDene: /gecmis 14-05-2026 veya /gecmis 2026-05-14")
+                await message.reply(f"❌ No records found for {param}.\n\nTry: /gecmis 14-05-2026 or /gecmis 2026-05-14")
                 return
             
-            mesaj = f"📜 **{param} TARİHİNDEKİ İŞLEMLER (ID ile)**\n\n"
+            mesaj = f"📜 **RECORDS FOR {param} (with ID)**\n\n"
             for kayit_id, row in tarih_kayitlari[:20]:
                 mesaj += f"**ID: {kayit_id}** | 📅 {row[0]} - {row[1]}\n   {row[2][:100]}\n\n"
             await message.reply(mesaj[:4000])
             
     except Exception as e:
-        await message.reply(f"❌ Hata: {e}")
+        await message.reply(f"❌ Error: {e}")
 
 # ==================== GEÇMİŞ SİLME ====================
 @dp.message_handler(commands=['gecmis_sil'])
@@ -1313,7 +1309,7 @@ async def gecmis_sil(message: types.Message):
     global silinecek_gecmis_id, silinecek_gecmis_hepsi
     param = message.get_args()
     if not param:
-        await message.reply("Örnek:\n/gecmis_sil 5 - ID ile sil (ID'yi /gecmis ile görebilirsin)\n/gecmis_sil hepsi - Tüm geçmişi sil")
+        await message.reply("Example:\n/gecmis_sil 5 - Delete by ID (see IDs with /gecmis)\n/gecmis_sil hepsi - Delete all history")
         return
     
     try:
@@ -1322,7 +1318,7 @@ async def gecmis_sil(message: types.Message):
             satirlar = list(reader)
         
         if len(satirlar) <= 1:
-            await message.reply("❌ Silinecek kayıt yok.")
+            await message.reply("❌ No records to delete.")
             return
         
         basliklar = satirlar[0]
@@ -1330,32 +1326,40 @@ async def gecmis_sil(message: types.Message):
         
         if param.lower() == 'hepsi':
             silinecek_gecmis_hepsi = True
-            await message.reply(f"⚠️ **TÜM geçmiş kayıtları** silinecek ({len(veriler)} kayıt).\n\nBu işlem GERİ DÖNÜŞÜMSÜZDÜR!\n\n30 saniye içinde `/gecmis_evet` yazın.")
+            await message.reply(f"⚠️ **WARNING!**\n\n"
+                               f"ALL history records will be deleted ({len(veriler)} records).\n\n"
+                               f"**This action is IRREVERSIBLE!**\n\n"
+                               f"Type `/gecmis_evet` within 30 seconds to confirm.")
             await asyncio.sleep(30)
             if silinecek_gecmis_hepsi:
                 silinecek_gecmis_hepsi = None
-                await message.reply("⏰ Silme iptal edildi.")
+                await message.reply("⏰ Deletion cancelled.")
             return
         
         try:
             kayit_id = int(param)
             if kayit_id < 1 or kayit_id > len(veriler):
-                await message.reply(f"❌ Geçersiz ID. 1 ile {len(veriler)} arasında bir sayı girin.")
+                await message.reply(f"❌ Invalid ID. Enter 1-{len(veriler)}.")
                 return
             
             idx = kayit_id - 1
             silinecek_gecmis_id = (idx, veriler[idx])
-            await message.reply(f"⚠️ **ID: {kayit_id}** kaydı silinecek:\n\n📅 {veriler[idx][0]} - {veriler[idx][1]}\n   {veriler[idx][2][:200]}\n\nBu işlem GERİ DÖNÜŞÜMSÜZDÜR!\n\n30 saniye içinde `/gecmis_evet` yazın.")
+            await message.reply(f"⚠️ **WARNING!**\n\n"
+                               f"Record ID: {kayit_id} will be deleted:\n"
+                               f"📅 {veriler[idx][0]} - {veriler[idx][1]}\n"
+                               f"📝 {veriler[idx][2][:200]}\n\n"
+                               f"**This action is IRREVERSIBLE!**\n\n"
+                               f"Type `/gecmis_evet` within 30 seconds to confirm.")
             await asyncio.sleep(30)
             if silinecek_gecmis_id == (idx, veriler[idx]):
                 silinecek_gecmis_id = None
-                await message.reply("⏰ Silme iptal edildi.")
+                await message.reply("⏰ Deletion cancelled.")
             return
         except ValueError:
-            await message.reply("❌ ID sayı olmalı. Örnek: /gecmis_sil 5")
+            await message.reply("❌ ID must be a number. Example: /gecmis_sil 5")
             
     except Exception as e:
-        await message.reply(f"❌ Hata: {e}")
+        await message.reply(f"❌ Error: {e}")
 
 @dp.message_handler(commands=['gecmis_evet'])
 async def gecmis_evet(message: types.Message):
@@ -1372,7 +1376,7 @@ async def gecmis_evet(message: types.Message):
             with open('history.csv', 'w', encoding='utf-8-sig', newline='') as f:
                 writer = csv.writer(f)
                 writer.writerow(basliklar)
-            await message.reply("✅ Tüm geçmiş kayıtları silindi.")
+            await message.reply("✅ All history records deleted.")
             silinecek_gecmis_hepsi = None
             return
         
@@ -1383,14 +1387,14 @@ async def gecmis_evet(message: types.Message):
                 writer = csv.writer(f)
                 writer.writerow(basliklar)
                 writer.writerows(veriler)
-            await message.reply(f"✅ Kayıt silindi:\n📅 {silinen[0]} - {silinen[1]}\n   {silinen[2][:200]}")
+            await message.reply(f"✅ Record deleted:\n📅 {silinen[0]} - {silinen[1]}\n📝 {silinen[2][:200]}")
             silinecek_gecmis_id = None
             return
         
-        await message.reply("❌ Silinecek kayıt yok. Önce /gecmis_sil komutunu kullanın.")
+        await message.reply("❌ No record to delete. Use /gecmis_sil first.")
         
     except Exception as e:
-        await message.reply(f"❌ Hata: {e}")
+        await message.reply(f"❌ Error: {e}")
         silinecek_gecmis_id = None
         silinecek_gecmis_hepsi = None
 
