@@ -38,6 +38,10 @@ bekleyen_ph_ekle = {}
 bekleyen_hatirlat = {}
 bekleyen_islem = {}
 bekleyen_dus = {}
+bekleyen_gecmis_tarih = {}
+bekleyen_gecmis_sil = {}
+bekleyen_ph_sil = {}
+bekleyen_hatirlat_sil = {}
 
 client = OpenAI(base_url="https://apihub.agnes-ai.com/v1", api_key=AGNES_API_KEY)
 logging.basicConfig(level=logging.INFO)
@@ -249,10 +253,13 @@ def malzeme_listesi_menu(malzemeler, page=0, action="sorgula"):
     for item in malzemeler[page*8:(page+1)*8]:
         ad = item.get('Malzeme / Alet', '-')
         kb.add(InlineKeyboardButton(ad[:30], callback_data=f"{action}_{ad}"))
+    nav_buttons = []
     if page > 0:
-        kb.add(InlineKeyboardButton("◀️ Önceki", callback_data=f"page_{action}_{page-1}"))
+        nav_buttons.append(InlineKeyboardButton("◀️ Önceki", callback_data=f"page_{action}_{page-1}"))
     if len(malzemeler) > (page+1)*8:
-        kb.add(InlineKeyboardButton("Sonraki ▶️", callback_data=f"page_{action}_{page+1}"))
+        nav_buttons.append(InlineKeyboardButton("Sonraki ▶️", callback_data=f"page_{action}_{page+1}"))
+    if nav_buttons:
+        kb.row(*nav_buttons)
     kb.add(InlineKeyboardButton("🔙 Geri", callback_data="stok_menu"))
     return kb
 
@@ -261,10 +268,13 @@ def stoktan_dus_malzeme_menu(malzemeler, page=0):
     for item in malzemeler[page*8:(page+1)*8]:
         ad = item.get('Malzeme / Alet', '-')
         kb.add(InlineKeyboardButton(ad[:30], callback_data=f"dus_malzeme_{ad}"))
+    nav_buttons = []
     if page > 0:
-        kb.add(InlineKeyboardButton("◀️ Önceki", callback_data=f"dus_page_{page-1}"))
+        nav_buttons.append(InlineKeyboardButton("◀️ Önceki", callback_data=f"dus_page_{page-1}"))
     if len(malzemeler) > (page+1)*8:
-        kb.add(InlineKeyboardButton("Sonraki ▶️", callback_data=f"dus_page_{page+1}"))
+        nav_buttons.append(InlineKeyboardButton("Sonraki ▶️", callback_data=f"dus_page_{page+1}"))
+    if nav_buttons:
+        kb.row(*nav_buttons)
     kb.add(InlineKeyboardButton("🔙 Geri", callback_data="stok_menu"))
     return kb
 
@@ -273,7 +283,7 @@ def miktar_menu(malzeme, birim, prefix):
     for m in [1, 5, 10, 20, 50, 100]:
         kb.add(InlineKeyboardButton(str(m), callback_data=f"{prefix}_miktar_{m}_{malzeme}_{birim}"))
     kb.add(InlineKeyboardButton("✏️ Özel", callback_data=f"{prefix}_ozel_{malzeme}_{birim}"))
-    kb.add(InlineKeyboardButton("🔙 Geri", callback_data=f"{prefix}_geri"))
+    kb.add(InlineKeyboardButton("🔙 Geri", callback_data=f"{prefix}_miktar_geri"))
     return kb
 
 def islem_tur_menu(prefix):
@@ -555,7 +565,7 @@ async def process_callback(callback_query: types.CallbackQuery):
     elif data == "menu_stok":
         await bot.edit_message_text("📦 **STOK**", chat_id=msg.chat.id, message_id=msg.message_id, reply_markup=stok_menu())
     elif data == "menu_gecmis":
-        await bot.edit_message_text("📜 **GEÇMİŞ**", chat_id=msg.chat.id, message_id=msg.message_id, reply_markup=gecis_menu())
+        await bot.edit_message_text("📜 **GEÇMİŞ**", chat_id=msg.chat.id, message_id=msg.message_id, reply_markup=gecmis_menu())
     elif data == "menu_rapor":
         await bot.edit_message_text("📊 **RAPOR**", chat_id=msg.chat.id, message_id=msg.message_id, reply_markup=rapor_menu())
     elif data == "menu_hatirlat":
@@ -593,7 +603,7 @@ async def process_callback(callback_query: types.CallbackQuery):
         await bot.edit_message_text(f"❌ {ad} bulunamadı", chat_id=msg.chat.id, message_id=msg.message_id)
     elif data == "stok_sil_ac":
         stoklar = stok_oku()
-        await bot.edit_message_text("❌ **Sil**", chat_id=msg.chat.id, message_id=msg.message_id, reply_markup=malzeme_listesi_menu(stoklar, 0, "sil"))
+        await bot.edit_message_text("❌ **Malzeme seç**", chat_id=msg.chat.id, message_id=msg.message_id, reply_markup=malzeme_listesi_menu(stoklar, 0, "sil"))
     elif data.startswith("sil_"):
         ad = data.replace("sil_", "")
         stoklar = stok_oku()
@@ -686,10 +696,11 @@ async def process_callback(callback_query: types.CallbackQuery):
             mesaj += f"📅 {r.get('Tarih', '-')} - {r.get('Islem', '-')}\n   {r.get('Kullanilan_Malzeme_Miktar', '-')[:60]}\n\n"
         await bot.edit_message_text(mesaj[:4000], chat_id=msg.chat.id, message_id=msg.message_id)
     elif data == "gecmis_tarih_ac":
-        bekleyen_gecmis_tarih = True
+        bekleyen_gecmis_tarih[user_id] = True
         await bot.edit_message_text("📅 **Tarih yaz** (örn: 12-06-2026):", chat_id=msg.chat.id, message_id=msg.message_id, reply_markup=iptal_menusu("menu_gecmis"))
     elif data == "gecmis_sil_ac":
-        await bot.edit_message_text("❌ **Silinecek işlem ID'sini yaz** (/gecmis ile ID'leri gör):", chat_id=msg.chat.id, message_id=msg.message_id, reply_markup=iptal_menusu("menu_gecmis"))
+        bekleyen_gecmis_sil[user_id] = True
+        await bot.edit_message_text("❌ **Silinecek işlem ID'sini yaz** (1-10 arası):", chat_id=msg.chat.id, message_id=msg.message_id, reply_markup=iptal_menusu("menu_gecmis"))
     elif data == "islem_ekle":
         bekleyen_islem[user_id] = {}
         await bot.edit_message_text("📝 **İŞLEM EKLE**\n\nTarih seç:", chat_id=msg.chat.id, message_id=msg.message_id, reply_markup=tarih_menu())
@@ -758,7 +769,8 @@ async def process_callback(callback_query: types.CallbackQuery):
         except:
             await bot.edit_message_text("❌ Hata", chat_id=msg.chat.id, message_id=msg.message_id)
     elif data == "hatirlat_sil_ac":
-        await bot.edit_message_text("❌ **Silinecek hatırlatma ID'sini yaz** (/hatirlatmalar ile gör):", chat_id=msg.chat.id, message_id=msg.message_id, reply_markup=iptal_menusu("menu_hatirlat"))
+        bekleyen_hatirlat_sil[user_id] = True
+        await bot.edit_message_text("❌ **Silinecek hatırlatma ID'sini yaz** (/hatirlat_liste ile gör):", chat_id=msg.chat.id, message_id=msg.message_id, reply_markup=iptal_menusu("menu_hatirlat"))
 
     # RAPOR
     elif data == "rapor_aylik_ac":
@@ -870,6 +882,7 @@ async def process_callback(callback_query: types.CallbackQuery):
         bekleyen_ph_ekle[user_id] = {}
         await bot.edit_message_text("➕ **Teneke numarası yaz**", chat_id=msg.chat.id, message_id=msg.message_id, reply_markup=iptal_menusu("menu_ph"))
     elif data == "ph_sil_ac":
+        bekleyen_ph_sil[user_id] = True
         await bot.edit_message_text("❌ **Silinecek pH ID'sini yaz** (/ph_tumu ile bak):", chat_id=msg.chat.id, message_id=msg.message_id, reply_markup=iptal_menusu("menu_ph"))
 
     # AI
@@ -909,6 +922,68 @@ async def handle_text(message: types.Message):
         for parca in mesaj_parcala(cevap):
             await message.reply(f"🤖 **Agnes AI:**\n\n{parca}")
         await bot.delete_message(msg.chat.id, msg.message_id)
+        return
+
+    # Tarihli İşlemler
+    if user_id in bekleyen_gecmis_tarih:
+        del bekleyen_gecmis_tarih[user_id]
+        kayitlar = history_oku()
+        if not kayitlar:
+            await message.reply("❌ Kayıt yok")
+            return
+        tarih_kayitlari = [r for r in kayitlar if r.get('Tarih', '') == text]
+        if not tarih_kayitlari:
+            await message.reply(f"❌ {text} tarihinde kayıt yok")
+            return
+        mesaj = f"📜 **{text} TARİHİ**\n\n"
+        for r in tarih_kayitlari[:15]:
+            mesaj += f"• {r.get('Islem', '-')}: {r.get('Kullanilan_Malzeme_Miktar', '-')}\n"
+        await message.reply(mesaj[:4000])
+        return
+
+    # İşlem Sil
+    if user_id in bekleyen_gecmis_sil:
+        del bekleyen_gecmis_sil[user_id]
+        try:
+            kayit_id = int(text)
+            kayitlar = history_oku()
+            if kayit_id < 1 or kayit_id > len(kayitlar):
+                await message.reply(f"❌ Geçersiz ID (1-{len(kayitlar)})")
+                return
+            history_sheet.delete_rows(kayit_id + 1)
+            await message.reply(f"✅ Kayıt silindi")
+        except:
+            await message.reply("❌ Sayı yaz")
+        return
+
+    # Hatırlatma Sil
+    if user_id in bekleyen_hatirlat_sil:
+        del bekleyen_hatirlat_sil[user_id]
+        try:
+            idx = int(text) - 1
+            kayitlar = reminders_sheet.get_all_records()
+            if idx < 0 or idx >= len(kayitlar):
+                await message.reply("❌ Geçersiz ID")
+                return
+            reminders_sheet.delete_rows(idx + 2)
+            await message.reply(f"✅ Hatırlatma silindi")
+        except:
+            await message.reply("❌ Sayı yaz")
+        return
+
+    # pH Sil
+    if user_id in bekleyen_ph_sil:
+        del bekleyen_ph_sil[user_id]
+        try:
+            idx = int(text) - 1
+            kayitlar = ph_sheet.get_all_records()
+            if idx < 0 or idx >= len(kayitlar):
+                await message.reply("❌ Geçersiz ID")
+                return
+            ph_sheet.delete_rows(idx + 2)
+            await message.reply(f"✅ pH kaydı silindi")
+        except:
+            await message.reply("❌ Sayı yaz")
         return
 
     # Yeni Malzeme Ekle - ad
@@ -1062,64 +1137,6 @@ async def handle_text(message: types.Message):
         except:
             await message.reply("❌ Hata")
         del bekleyen_hatirlat[user_id]
-        return
-
-    # Tarihli İşlemler
-    if "gecmis_tarih" in str(message):
-        kayitlar = history_oku()
-        if not kayitlar:
-            await message.reply("❌ Kayıt yok")
-            return
-        tarih_kayitlari = [r for r in kayitlar if r.get('Tarih', '') == text]
-        if not tarih_kayitlari:
-            await message.reply(f"❌ {text} tarihinde kayıt yok")
-            return
-        mesaj = f"📜 **{text} TARİHİ**\n\n"
-        for r in tarih_kayitlari[:15]:
-            mesaj += f"• {r.get('Islem', '-')}: {r.get('Kullanilan_Malzeme_Miktar', '-')}\n"
-        await message.reply(mesaj[:4000])
-        return
-
-    # İşlem Sil
-    if "gecmis_sil" in str(message):
-        try:
-            kayit_id = int(text)
-            kayitlar = history_oku()
-            if kayit_id < 1 or kayit_id > len(kayitlar):
-                await message.reply(f"❌ Geçersiz ID (1-{len(kayitlar)})")
-                return
-            history_sheet.delete_rows(kayit_id + 1)
-            await message.reply(f"✅ Kayıt silindi")
-        except:
-            await message.reply("❌ Sayı yaz")
-        return
-
-    # Hatırlatma Sil
-    if "hatirlat_sil" in str(message):
-        try:
-            idx = int(text) - 1
-            kayitlar = reminders_sheet.get_all_records()
-            if idx < 0 or idx >= len(kayitlar):
-                await message.reply("❌ Geçersiz ID")
-                return
-            reminders_sheet.delete_rows(idx + 2)
-            await message.reply(f"✅ Hatırlatma silindi")
-        except:
-            await message.reply("❌ Sayı yaz")
-        return
-
-    # pH Sil
-    if "ph_sil" in str(message):
-        try:
-            idx = int(text) - 1
-            kayitlar = ph_sheet.get_all_records()
-            if idx < 0 or idx >= len(kayitlar):
-                await message.reply("❌ Geçersiz ID")
-                return
-            ph_sheet.delete_rows(idx + 2)
-            await message.reply(f"✅ pH kaydı silindi")
-        except:
-            await message.reply("❌ Sayı yaz")
         return
 
     else:
