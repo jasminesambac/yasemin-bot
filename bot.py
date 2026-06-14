@@ -37,14 +37,44 @@ bekleyen_ph_ekle = {}
 bekleyen_hatirlat = {}
 bekleyen_islem = {}
 bekleyen_dus = {}
+bekleyen_gecmis_tarih = {}
+bekleyen_gecmis_sil = {}
+bekleyen_hatirlat_sil = {}
+bekleyen_ph_sil = {}
 
 client = OpenAI(base_url="https://apihub.agnes-ai.com/v1", api_key=AGNES_API_KEY)
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher(bot)
 
+# ✅ TARIH FORMAT STANDARDIZASYONU
 def tarih_format():
     return datetime.now().strftime("%d-%m-%Y")
+
+def tarih_normalize(tarih_str):
+    """Gelen tarihi DD-MM-YYYY formatına çevir"""
+    try:
+        if not tarih_str:
+            return None
+        
+        tarih_str = str(tarih_str).strip()
+        
+        # Zaten DD-MM-YYYY formatında mı?
+        if len(tarih_str) == 10 and tarih_str[2] == '-' and tarih_str[5] == '-':
+            return tarih_str
+        
+        # YYYY-MM-DD formatında mı?
+        if len(tarih_str) == 10 and tarih_str[4] == '-' and tarih_str[7] == '-':
+            parts = tarih_str.split('-')
+            return f"{parts[2]}-{parts[1]}-{parts[0]}"
+        
+        # Ay-Yıl formatında mı? (MM-YYYY)
+        if len(tarih_str) == 7 and tarih_str[2] == '-':
+            return tarih_str
+            
+        return tarih_str
+    except:
+        return tarih_str
 
 def mesaj_parcala(metin, uzunluk=4000):
     if len(metin) <= uzunluk:
@@ -97,7 +127,11 @@ def history_ekle(islem, malzeme, miktar, birim, ph="", not_metni=""):
 
 def history_oku():
     try:
-        return history_sheet.get_all_records()
+        kayitlar = history_sheet.get_all_records()
+        # ID ekle
+        for idx, r in enumerate(kayitlar, 1):
+            r['_ID'] = idx
+        return kayitlar
     except:
         return []
 
@@ -154,7 +188,7 @@ def stok_menu():
         InlineKeyboardButton("⬇️ Stoktan Düş", callback_data="stok_dus"),
         InlineKeyboardButton("➕ Yeni Malzeme Ekle", callback_data="stok_ekle_ac"),
         InlineKeyboardButton("❌ Malzeme Sil", callback_data="stok_sil_ac"),
-        InlineKeyboardButton("↩️ Geri Al", callback_data="stok_geri_al"),
+        InlineKeyboardButton("↩️ Geri Al (Son İşlem)", callback_data="stok_geri_al"),
         InlineKeyboardButton("🔙 Geri", callback_data="menu_ana")
     )
     return kb
@@ -453,26 +487,23 @@ async def gecmis_command(message: types.Message):
         await message.reply("📜 Kayıt yok")
         return
     if param and param.lower() != "hepsi":
-        aranan_tarih = param
-        if '-' in aranan_tarih and len(aranan_tarih.split('-')[0]) == 4:
-            y,a,g = aranan_tarih.split('-')
-            aranan_tarih = f"{g}-{a}-{y}"
+        aranan_tarih = tarih_normalize(param)
         tarih_kayitlari = [r for r in kayitlar if r.get('Tarih','') == aranan_tarih]
         if not tarih_kayitlari:
             await message.reply(f"❌ {param} tarihinde kayıt yok")
             return
         mesaj = f"📜 **{param} TARİHİNDEKİ İŞLEMLER**\n\n"
-        for r in tarih_kayitlari[:15]:
-            kayit_id = kayitlar.index(r) + 1
-            mesaj += f"**ID: {kayit_id}** | 📅 {r.get('Tarih','-')} - {r.get('Islem','-')}\n   {r.get('Kullanilan_Malzeme_Miktar','-')}\n\n"
-        await message.reply(mesaj[:4000])
+        for r in tarih_kayitlari[:10]:
+            mesaj += f"**ID: {r.get('_ID', '-')}** | 📅 {r.get('Tarih','-')} - {r.get('Islem','-')}\n   {r.get('Kullanilan_Malzeme_Miktar','-')[:50]}\n\n"
+        for parca in mesaj_parcala(mesaj):
+            await message.reply(parca)
         return
-    sonlar = kayitlar[-15:][::-1]
-    mesaj = "📜 **SON 15 İŞLEM (ID ile)**\n\n"
-    for i, r in enumerate(sonlar, 1):
-        kayit_id = len(kayitlar) - i + 1
-        mesaj += f"**ID: {kayit_id}** | 📅 {r.get('Tarih','-')} - {r.get('Islem','-')}\n   {r.get('Kullanilan_Malzeme_Miktar','-')[:60]}\n\n"
-    await message.reply(mesaj[:4000])
+    sonlar = kayitlar[-10:][::-1]
+    mesaj = "📜 **SON 10 İŞLEM (ID ile)**\n\n"
+    for r in sonlar:
+        mesaj += f"**ID: {r.get('_ID', '-')}** | 📅 {r.get('Tarih','-')} - {r.get('Islem','-')}\n   {r.get('Kullanilan_Malzeme_Miktar','-')[:50]}\n\n"
+    for parca in mesaj_parcala(mesaj):
+        await message.reply(parca)
 
 @dp.message_handler(commands=['rapor_gunluk'])
 async def rapor_gunluk_command(message: types.Message):
@@ -484,7 +515,7 @@ async def rapor_gunluk_command(message: types.Message):
         return
     mesaj = f"📅 **{bugun} GÜNLÜK RAPOR**\n\n📝 Toplam: {len(gun)}\n\n"
     for r in gun[:10]:
-        mesaj += f"• {r.get('Islem','-')}: {r.get('Kullanilan_Malzeme_Miktar','-')}\n"
+        mesaj += f"• **ID: {r.get('_ID', '-')}** - {r.get('Islem','-')}: {r.get('Kullanilan_Malzeme_Miktar','-')}\n"
     await message.reply(mesaj)
 
 @dp.message_handler(commands=['istatistik'])
@@ -524,7 +555,8 @@ async def yedekle_command(message: types.Message):
 async def hava_command(message: types.Message):
     sehir = message.get_args() or "Istanbul"
     try:
-        r = requests.get(f"https://wttr.in/{sehir}?format=%C+%t+%w+%h&m", timeout=10)
+        # ✅ Türkçe hava durumu için lang=tr ekle
+        r = requests.get(f"https://wttr.in/{sehir}?format=%C+%t+%w+%h&m&lang=tr", timeout=10)
         await message.reply(f"🌤️ **{sehir.upper()} ŞU ANKİ HAVA**\n\n{r.text.strip()}\n(°C, km/h, %)")
     except:
         await message.reply("❌ Hava alınamadı")
@@ -674,23 +706,25 @@ async def process_callback(callback_query: types.CallbackQuery):
             return
         sonlar = kayitlar[-10:][::-1]
         mesaj = "📜 **SON 10 İŞLEM (ID ile)**\n\n"
-        for i, r in enumerate(sonlar,1):
-            kayit_id = len(kayitlar) - i + 1
-            mesaj += f"**ID: {kayit_id}** | 📅 {r.get('Tarih','-')} - {r.get('Islem','-')}\n   {r.get('Kullanilan_Malzeme_Miktar','-')[:60]}\n\n"
-        await bot.edit_message_text(mesaj[:4000], chat_id=msg.chat.id, message_id=msg.message_id)
+        for r in sonlar:
+            mesaj += f"**ID: {r.get('_ID', '-')}** | 📅 {r.get('Tarih','-')} - {r.get('Islem','-')}\n   {r.get('Kullanilan_Malzeme_Miktar','-')[:50]}\n\n"
+        for parca in mesaj_parcala(mesaj):
+            await bot.send_message(msg.chat.id, parca)
     elif data == "gecmis_hepsi":
         kayitlar = history_oku()
         if not kayitlar:
             await bot.edit_message_text("📜 Kayıt yok", chat_id=msg.chat.id, message_id=msg.message_id)
             return
         mesaj = "📜 **SON 30 İŞLEM (ID ile)**\n\n"
-        for idx, r in enumerate(kayitlar[-30:][::-1],1):
-            kayit_id = len(kayitlar) - idx + 1
-            mesaj += f"**ID: {kayit_id}** | 📅 {r.get('Tarih','-')} - {r.get('Islem','-')}\n   {r.get('Kullanilan_Malzeme_Miktar','-')[:60]}\n\n"
-        await bot.edit_message_text(mesaj[:4000], chat_id=msg.chat.id, message_id=msg.message_id)
+        for r in kayitlar[-30:][::-1]:
+            mesaj += f"**ID: {r.get('_ID', '-')}** | 📅 {r.get('Tarih','-')} - {r.get('Islem','-')}\n   {r.get('Kullanilan_Malzeme_Miktar','-')[:50]}\n\n"
+        for parca in mesaj_parcala(mesaj):
+            await bot.send_message(msg.chat.id, parca)
     elif data == "gecmis_tarih_ac":
+        bekleyen_gecmis_tarih[user_id] = True
         await bot.edit_message_text("📅 **Tarih yazın (örn: 12-06-2026):**", chat_id=msg.chat.id, message_id=msg.message_id, reply_markup=iptal_menusu("menu_gecmis"))
     elif data == "gecmis_sil_ac":
+        bekleyen_gecmis_sil[user_id] = True
         await bot.edit_message_text("❌ **Silinecek işlemin ID'sini yazın**\n(/gecmis ile ID'leri görebilirsiniz):", chat_id=msg.chat.id, message_id=msg.message_id, reply_markup=iptal_menusu("menu_gecmis"))
     elif data == "islem_ekle":
         bekleyen_islem[user_id] = {}
@@ -736,7 +770,7 @@ async def process_callback(callback_query: types.CallbackQuery):
 
     elif data == "hatirlat_ekle_ac":
         bekleyen_hatirlat[user_id] = {}
-        await bot.edit_message_text("⏰ **Hatırlatma Ekle**\n\nTarih seçin:", chat_id=msg.chat.id, message_id=msg.message_id, reply_markup=tarih_menu())
+        await bot.edit_message_text("⏰ **Hatırlatma Ekle**\n\nTarih yazın (DD-MM-YYYY):", chat_id=msg.chat.id, message_id=msg.message_id, reply_markup=iptal_menusu("menu_hatirlat"))
     elif data == "hatirlat_liste":
         try:
             kayitlar = reminders_sheet.get_all_records()
@@ -745,12 +779,14 @@ async def process_callback(callback_query: types.CallbackQuery):
                 await bot.edit_message_text("✅ Bekleyen hatırlatma yok", chat_id=msg.chat.id, message_id=msg.message_id)
                 return
             mesaj = "📅 **BEKLEYEN HATIRLATMALAR**\n\n"
-            for i,r in bekleyen:
+            for i,r in bekleyen[:10]:
                 mesaj += f"**ID: {i}** | {r.get('Tarih')} {r.get('Saat')} - {r.get('Islem')}\n"
-            await bot.edit_message_text(mesaj[:4000], chat_id=msg.chat.id, message_id=msg.message_id)
+            for parca in mesaj_parcala(mesaj):
+                await bot.send_message(msg.chat.id, parca)
         except:
             await bot.edit_message_text("❌ Hata", chat_id=msg.chat.id, message_id=msg.message_id)
     elif data == "hatirlat_sil_ac":
+        bekleyen_hatirlat_sil[user_id] = True
         await bot.edit_message_text("❌ **Silinecek hatırlatmanın ID'sini yazın**\n(/hatirlat_liste ile ID'leri görebilirsiniz):", chat_id=msg.chat.id, message_id=msg.message_id, reply_markup=iptal_menusu("menu_hatirlat"))
 
     elif data == "rapor_aylik_ac":
@@ -765,7 +801,7 @@ async def process_callback(callback_query: types.CallbackQuery):
             return
         mesaj = f"📅 **{bugun} GÜNLÜK RAPOR**\n\n📝 Toplam: {len(gun)}\n\n"
         for r in gun[:10]:
-            mesaj += f"• {r.get('Islem','-')}: {r.get('Kullanilan_Malzeme_Miktar','-')}\n"
+            mesaj += f"• **ID: {r.get('_ID', '-')}** - {r.get('Islem','-')}: {r.get('Kullanilan_Malzeme_Miktar','-')}\n"
         await bot.edit_message_text(mesaj, chat_id=msg.chat.id, message_id=msg.message_id)
     elif data == "rapor_istatistik":
         kayitlar = history_oku()
@@ -791,7 +827,8 @@ async def process_callback(callback_query: types.CallbackQuery):
     elif data.startswith("sehir_"):
         sehir = data.replace("sehir_","")
         try:
-            r = requests.get(f"https://wttr.in/{sehir}?format=%C+%t+%w+%h&m", timeout=10)
+            # ✅ Türkçe hava durumu
+            r = requests.get(f"https://wttr.in/{sehir}?format=%C+%t+%w+%h&m&lang=tr", timeout=10)
             await bot.edit_message_text(f"🌤️ **{sehir.upper()} ŞU ANKİ HAVA**\n\n{r.text.strip()}\n(°C, km/h, %)", chat_id=msg.chat.id, message_id=msg.message_id)
         except:
             await bot.edit_message_text("❌ Hava alınamadı", chat_id=msg.chat.id, message_id=msg.message_id)
@@ -832,7 +869,8 @@ async def process_callback(callback_query: types.CallbackQuery):
             if not teneke_kayitlari:
                 await bot.edit_message_text(f"❌ Teneke {teneke} için kayıt yok", chat_id=msg.chat.id, message_id=msg.message_id)
                 return
-            en_son = max(teneke_kayitlari, key=lambda x: x.get('Tarih',''))
+            # ✅ Tarih karşılaştırması düzeltildi
+            en_son = teneke_kayitlari[-1]  # Son eklenen
             await bot.edit_message_text(f"🔬 **Teneke {teneke} - Son pH**\n📅 {en_son['Tarih']}\n📊 pH: {en_son['pH']}\n📝 {en_son.get('Not','-')}", chat_id=msg.chat.id, message_id=msg.message_id)
         except:
             await bot.edit_message_text("❌ Hata", chat_id=msg.chat.id, message_id=msg.message_id)
@@ -855,9 +893,10 @@ async def process_callback(callback_query: types.CallbackQuery):
                 await bot.edit_message_text(f"❌ Teneke {teneke} için kayıt yok", chat_id=msg.chat.id, message_id=msg.message_id)
                 return
             mesaj = f"📊 **Teneke {teneke} - TÜM pH**\n\n"
-            for k in sorted(teneke_kayitlari, key=lambda x: x.get('Tarih',''), reverse=True):
+            for k in teneke_kayitlari[::-1]:
                 mesaj += f"📅 {k['Tarih']}: pH {k['pH']} - {k.get('Not','')}\n"
-            await bot.edit_message_text(mesaj[:4000], chat_id=msg.chat.id, message_id=msg.message_id)
+            for parca in mesaj_parcala(mesaj):
+                await bot.send_message(msg.chat.id, parca)
         except:
             await bot.edit_message_text("❌ Hata", chat_id=msg.chat.id, message_id=msg.message_id)
     elif data == "ph_tumu":
@@ -873,16 +912,18 @@ async def process_callback(callback_query: types.CallbackQuery):
             mesaj = "📊 **TÜM TENEKELER - TÜM pH**\n\n"
             for t in sorted(tenekeler.keys(), key=lambda x: int(x) if x.isdigit() else 0):
                 mesaj += f"🔹 **Teneke {t}**\n"
-                for k in sorted(tenekeler[t], key=lambda x: x.get('Tarih',''), reverse=True)[:5]:
+                for k in tenekeler[t][::-1][:5]:
                     mesaj += f" 📅 {k['Tarih']}: pH {k['pH']}\n"
                 mesaj += "\n"
-            await bot.edit_message_text(mesaj[:4000], chat_id=msg.chat.id, message_id=msg.message_id)
+            for parca in mesaj_parcala(mesaj):
+                await bot.send_message(msg.chat.id, parca)
         except:
             await bot.edit_message_text("❌ Hata", chat_id=msg.chat.id, message_id=msg.message_id)
     elif data == "ph_ekle_ac":
         bekleyen_ph_ekle[user_id] = {}
         await bot.edit_message_text("➕ **Teneke numarasını yazın:**", chat_id=msg.chat.id, message_id=msg.message_id, reply_markup=iptal_menusu("menu_ph"))
     elif data == "ph_sil_ac":
+        bekleyen_ph_sil[user_id] = True
         await bot.edit_message_text("❌ **Silinecek pH kaydının ID'sini yazın**\n(/ph_tumu ile ID'leri görebilirsiniz):", chat_id=msg.chat.id, message_id=msg.message_id, reply_markup=iptal_menusu("menu_ph"))
 
     elif data == "ai_sor_ac":
@@ -963,7 +1004,7 @@ async def handle_text(message: types.Message):
         return
 
     if user_id in bekleyen_islem and bekleyen_islem[user_id].get('tarih_ozel'):
-        bekleyen_islem[user_id]['tarih'] = text
+        bekleyen_islem[user_id]['tarih'] = tarih_normalize(text)
         del bekleyen_islem[user_id]['tarih_ozel']
         await message.reply(f"📅 Tarih: {text}\n\nİşlem türü seçin:", reply_markup=islem_tur_menu("islem"))
         return
@@ -986,7 +1027,8 @@ async def handle_text(message: types.Message):
         if not kayitlar:
             await message.reply("❌ Kayıt yok")
             return
-        ay_kayitlari = [r for r in kayitlar if ay in r.get('Tarih','') or f"-{ay[3:]}-{ay[:2]}" in r.get('Tarih','')]
+        # ✅ TARİH KARŞILAŞTIRMASI DÜZELTILDI
+        ay_kayitlari = [r for r in kayitlar if ay in r.get('Tarih','')]
         if not ay_kayitlari:
             await message.reply(f"❌ {ay} ayında kayıt bulunamadı.")
             return
@@ -1040,8 +1082,9 @@ async def handle_text(message: types.Message):
         del bekleyen_ph_ekle[user_id]
         return
 
+    # ✅ HATIRLAT FLOW DÜZELTILDI
     if user_id in bekleyen_hatirlat and 'tarih' not in bekleyen_hatirlat[user_id]:
-        bekleyen_hatirlat[user_id]['tarih'] = text
+        bekleyen_hatirlat[user_id]['tarih'] = tarih_normalize(text)
         await message.reply(f"📅 Tarih: {text}\n\nSaat yazın (örn: 10:00):", reply_markup=iptal_menusu("menu_hatirlat"))
         return
     if user_id in bekleyen_hatirlat and 'tarih' in bekleyen_hatirlat[user_id] and 'saat' not in bekleyen_hatirlat[user_id]:
@@ -1058,27 +1101,28 @@ async def handle_text(message: types.Message):
         del bekleyen_hatirlat[user_id]
         return
 
-    if "gecmis_tarih" in str(message):
+    # ✅ GEÇMİŞ TARİH FİLTRE DÜZELTILDI
+    if user_id in bekleyen_gecmis_tarih:
+        del bekleyen_gecmis_tarih[user_id]
         kayitlar = history_oku()
         if not kayitlar:
             await message.reply("❌ Kayıt yok")
             return
-        aranan = text
-        if '-' in aranan and len(aranan.split('-')[0]) == 4:
-            y,a,g = aranan.split('-')
-            aranan = f"{g}-{a}-{y}"
+        aranan = tarih_normalize(text)
         tarih_kayitlari = [r for r in kayitlar if r.get('Tarih','') == aranan]
         if not tarih_kayitlari:
             await message.reply(f"❌ {text} tarihinde kayıt yok")
             return
         mesaj = f"📜 **{text} TARİHİNDEKİ İŞLEMLER**\n\n"
         for r in tarih_kayitlari[:15]:
-            kayit_id = kayitlar.index(r) + 1
-            mesaj += f"**ID: {kayit_id}** | {r.get('Islem','-')}\n   {r.get('Kullanilan_Malzeme_Miktar','-')}\n\n"
-        await message.reply(mesaj[:4000])
+            mesaj += f"**ID: {r.get('_ID', '-')}** | {r.get('Islem','-')}\n   {r.get('Kullanilan_Malzeme_Miktar','-')}\n\n"
+        for parca in mesaj_parcala(mesaj):
+            await message.reply(parca)
         return
 
-    if "gecmis_sil" in str(message):
+    # ✅ GEÇMİŞ SİL DÜZELTILDI
+    if user_id in bekleyen_gecmis_sil:
+        del bekleyen_gecmis_sil[user_id]
         try:
             kayit_id = int(text)
             kayitlar = history_oku()
@@ -1091,7 +1135,9 @@ async def handle_text(message: types.Message):
             await message.reply("❌ Lütfen sayı girin.")
         return
 
-    if "hatirlat_sil" in str(message):
+    # ✅ HATIRLAT SİL DÜZELTILDI
+    if user_id in bekleyen_hatirlat_sil:
+        del bekleyen_hatirlat_sil[user_id]
         try:
             idx = int(text) - 1
             kayitlar = reminders_sheet.get_all_records()
@@ -1104,7 +1150,9 @@ async def handle_text(message: types.Message):
             await message.reply("❌ Lütfen sayı girin.")
         return
 
-    if "ph_sil" in str(message):
+    # ✅ pH SİL DÜZELTILDI
+    if user_id in bekleyen_ph_sil:
+        del bekleyen_ph_sil[user_id]
         try:
             idx = int(text) - 1
             kayitlar = ph_sheet.get_all_records()
