@@ -577,81 +577,10 @@ async def process_callback(callback_query: types.CallbackQuery):
         if not stoklar:
             await bot.edit_message_text("❌ Stok boş", chat_id=msg.chat.id, message_id=msg.message_id)
             return
-        
-        # SAYFALAMALI STOK LİSTESİ - Tüm malzemeler gözükecek
-        page = 0
-        items_per_page = 15
-        total_pages = (len(stoklar) + items_per_page - 1) // items_per_page
-        
-        def stok_liste_menu(p):
-            kb = InlineKeyboardMarkup(row_width=1)
-            start = p * items_per_page
-            end = start + items_per_page
-            for i in stoklar[start:end]:
-                ad = i.get('Malzeme / Alet', '-')
-                kalan = i.get('Kalan Miktar', '0')
-                birim = i.get('Birim', '')
-                kb.add(InlineKeyboardButton(f"{ad}: {kalan} {birim}", callback_data=f"stok_detay_{ad}"))
-            
-            nav_buttons = []
-            if p > 0:
-                nav_buttons.append(InlineKeyboardButton("◀️ Önceki", callback_data=f"stok_liste_page_{p-1}"))
-            if p < total_pages - 1:
-                nav_buttons.append(InlineKeyboardButton("Sonraki ▶️", callback_data=f"stok_liste_page_{p+1}"))
-            if nav_buttons:
-                kb.row(*nav_buttons)
-            kb.add(InlineKeyboardButton("🔙 Geri", callback_data="stok_menu"))
-            return kb
-        
-        await bot.edit_message_text(f"📦 **ENVANTER LİSTESİ** (Sayfa {page+1}/{total_pages})", 
-                                    chat_id=msg.chat.id, message_id=msg.message_id, 
-                                    reply_markup=stok_liste_menu(page))
-        return
-
-    elif data.startswith("stok_liste_page_"):
-        page = int(data.replace("stok_liste_page_", ""))
-        stoklar = stok_oku()
-        if not stoklar:
-            await bot.edit_message_text("❌ Stok boş", chat_id=msg.chat.id, message_id=msg.message_id)
-            return
-        items_per_page = 15
-        total_pages = (len(stoklar) + items_per_page - 1) // items_per_page
-        
-        def stok_liste_menu(p):
-            kb = InlineKeyboardMarkup(row_width=1)
-            start = p * items_per_page
-            end = start + items_per_page
-            for i in stoklar[start:end]:
-                ad = i.get('Malzeme / Alet', '-')
-                kalan = i.get('Kalan Miktar', '0')
-                birim = i.get('Birim', '')
-                kb.add(InlineKeyboardButton(f"{ad}: {kalan} {birim}", callback_data=f"stok_detay_{ad}"))
-            nav_buttons = []
-            if p > 0:
-                nav_buttons.append(InlineKeyboardButton("◀️ Önceki", callback_data=f"stok_liste_page_{p-1}"))
-            if p < total_pages - 1:
-                nav_buttons.append(InlineKeyboardButton("Sonraki ▶️", callback_data=f"stok_liste_page_{p+1}"))
-            if nav_buttons:
-                kb.row(*nav_buttons)
-            kb.add(InlineKeyboardButton("🔙 Geri", callback_data="stok_menu"))
-            return kb
-        
-        await bot.edit_message_text(f"📦 **ENVANTER LİSTESİ** (Sayfa {page+1}/{total_pages})", 
-                                    chat_id=msg.chat.id, message_id=msg.message_id, 
-                                    reply_markup=stok_liste_menu(page))
-        return
-
-    elif data.startswith("stok_detay_"):
-        ad = data.replace("stok_detay_", "")
-        stoklar = stok_oku()
-        for i in stoklar:
-            if i.get('Malzeme / Alet') == ad:
-                mesaj = f"📦 **{ad}**\n📊 Kalan: {i.get('Kalan Miktar')} {i.get('Birim')}\n📝 {i.get('Görevi / Not', '-')}"
-                await bot.edit_message_text(mesaj, chat_id=msg.chat.id, message_id=msg.message_id, reply_markup=iptal_menusu("stok_liste"))
-                return
-        await bot.edit_message_text(f"❌ {ad} bulunamadı", chat_id=msg.chat.id, message_id=msg.message_id)
-        return
-
+        mesaj = "📦 **ENVANTER LİSTESİ**\n\n"
+        for i in stoklar[:25]:
+            mesaj += f"• {i.get('Malzeme / Alet')}: {i.get('Kalan Miktar')} {i.get('Birim')}\n"
+        await bot.edit_message_text(mesaj, chat_id=msg.chat.id, message_id=msg.message_id)
     elif data == "stok_sorgula_ac":
         stoklar = stok_oku()
         await bot.edit_message_text("🔍 **Malzeme seçin:**", chat_id=msg.chat.id, message_id=msg.message_id, reply_markup=malzeme_listesi_menu(stoklar,0,"sorgula"))
