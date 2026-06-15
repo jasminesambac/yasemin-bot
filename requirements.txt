@@ -1,7 +1,0 @@
-aiogram==2.25.2
-google-genai
-openai
-requests
-pandas
-gspread
-oauth2client
