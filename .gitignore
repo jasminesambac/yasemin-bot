@@ -1,5 +1,0 @@
-*.pyc
-__pycache__/
-.env
-API_LISTEM.txt
-.DS_Store
