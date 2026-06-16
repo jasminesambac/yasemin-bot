@@ -41,6 +41,105 @@ AGNES_MODEL = os.getenv("AGNES_MODEL", "agnes-2.0-flash").strip()
 INVENTORY_HEADERS = ["ID", "Kategori", "Malzeme / Alet", "Başlangıç Miktarı", "Kullanılan", "Kalan Miktar", "Birim", "Görevi / Not", "CreatedAt"]
 HISTORY_HEADERS = ["ID", "Tarih", "Islem", "Malzeme", "Miktar", "Birim", "pH", "Not", "CreatedAt"]
 PH_HEADERS = ["ID", "Tarih", "Teneke_No", "pH", "Not", "CreatedAt"]
+REMINDER_HEADERS = ["ID", "Tarih", "Saat", "Metin", "Durum", "Chat_ID", "CreatedAt"]
+
+SHEET: dict[str, gspread.Worksheet] = {}
+AI_CLIENT = None
+
+
+def now() -> datetime:
+    return datetime.utcnow() + TR_TZ_OFFSET
+
+
+def today_str() -> str:
+    return now().strftime(DATE_FMT)
+
+
+def normalize_name(value: Any) -> str:
+    return str(value or "").strip().casefold()
+
+
+def parse_decimal(value: Any) -> float:
+    text = str(value).strip().replace(",", ".")
+    return float(text)
+
+
+def format_decimal(value: float) -> str:
+    if abs(value - int(value)) < 0.000001:
+        return str(int(value))
+    return f"{value:.2f}".rstrip("0").rstrip(".").replace(".", ",")
+
+
+def parse_date(value: str | None, *, allow_words: bool = True) -> str | None:
+    if not value:
+        return None
+    text = value.strip().lower()
+    if allow_words and text in {"bugün", "bugun", "today"}:
+        return today_str()
+    if allow_words and text in {"dün", "dun", "yesterday"}:
+        return (now() - timedelta(days=1)).strftime(DATE_FMT)
+    text = text.replace("/", "-").replace(".", "-")
+    for fmt in ("%d-%m-%Y", "%Y-%m-%d", "%d-%m-%y"):
+        try:
+            return datetime.strptime(text, fmt).strftime(DATE_FMT)
+        except ValueError:
+            pass
+    return None
+
+
+def parse_month(value: str) -> tuple[int, int] | None:
+    text = value.strip().replace("/", "-").replace(".", "-")
+    for fmt in ("%m-%Y", "%Y-%m"):
+        try:
+            dt = datetime.strptime(text, fmt)
+            return dt.month, dt.year
+        except ValueError:
+            pass
+    return None
+
+import asyncio
+import csv
+import io
+import json
+import logging
+import os
+import re
+import zipfile
+from collections import Counter, defaultdict
+from datetime import datetime, timedelta
+from typing import Any
+
+import gspread
+import requests
+from oauth2client.service_account import ServiceAccountCredentials
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputFile, Update
+from telegram.constants import ChatAction
+from telegram.error import BadRequest
+from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
+
+try:
+    from openai import OpenAI
+except Exception:
+    OpenAI = None
+
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+log = logging.getLogger("yasemin-bot")
+
+TR_TZ_OFFSET = timedelta(hours=3)
+DATE_FMT = "%d-%m-%Y"
+MSG_LIMIT = 3900
+
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+SHEET_ID = os.getenv("SHEET_ID", "").strip()
+CREDENTIALS_JSON = os.getenv("GOOGLE_SHEETS_CREDENTIALS", "").strip()
+AGNES_API_KEY = os.getenv("AGNES_API_KEY", "").strip()
+AGNES_BASE_URL = os.getenv("AGNES_BASE_URL", "https://apihub.agnes-ai.com/v1").strip()
+AGNES_MODEL = os.getenv("AGNES_MODEL", "agnes-2.0-flash").strip()
+
+INVENTORY_HEADERS = ["ID", "Kategori", "Malzeme / Alet", "Başlangıç Miktarı", "Kullanılan", "Kalan Miktar", "Birim", "Görevi / Not", "CreatedAt"]
+HISTORY_HEADERS = ["ID", "Tarih", "Islem", "Malzeme", "Miktar", "Birim", "pH", "Not", "CreatedAt"]
+PH_HEADERS = ["ID", "Tarih", "Teneke_No", "pH", "Not", "CreatedAt"]
 REMINDER_HEADERS = ["ID", "Tarih", "Saat", "Metin", "Durum", "CreatedAt"]
 
 SHEET: dict[str, gspread.Worksheet] = {}
