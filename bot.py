@@ -41,7 +41,7 @@ AGNES_MODEL = os.getenv("AGNES_MODEL", "agnes-2.0-flash").strip()
 INVENTORY_HEADERS = ["ID", "Kategori", "Malzeme / Alet", "Başlangıç Miktarı", "Kullanılan", "Kalan Miktar", "Birim", "Görevi / Not", "CreatedAt"]
 HISTORY_HEADERS = ["ID", "Tarih", "Islem", "Malzeme", "Miktar", "Birim", "pH", "Not", "CreatedAt"]
 PH_HEADERS = ["ID", "Tarih", "Teneke_No", "pH", "Not", "CreatedAt"]
-REMINDER_HEADERS = ["ID", "Tarih", "Saat", "Metin", "Durum", "Chat_ID", "CreatedAt"]
+REMINDER_HEADERS = ["ID", "Tarih", "Saat", "Metin", "Durum", "Chat_ID", "Tekrar", "CreatedAt"]
 
 SHEET: dict[str, gspread.Worksheet] = {}
 AI_CLIENT = None
@@ -248,17 +248,22 @@ def operation_type_menu(prefix: str) -> InlineKeyboardMarkup:
     return kb([
         [("Sulama", f"{prefix}:tur:Sulama"), ("Gübreleme", f"{prefix}:tur:Gübreleme")],
         [("İlaçlama", f"{prefix}:tur:İlaçlama"), ("Hasat", f"{prefix}:tur:Hasat")],
-        [("Toprak İşlemi", f"{prefix}:tur:Toprak İşlemi"), ("Diğer", f"{prefix}:tur:Diğer")],
+        [("Toprak İşlemi", f"{prefix}:tur:Toprak İşlemi"), ("Çelik Alma", f"{prefix}:tur:Çelik Alma")],
+        [("Çelik Kontrol", f"{prefix}:tur:Çelik Kontrol"), ("Sisleme", f"{prefix}:tur:Sisleme")],
+        [("Diğer", f"{prefix}:tur:Diğer")],
         [("Geri", "m:stock" if prefix == "use" else "m:history"), ("İptal", "cancel")],
     ])
 
 
 def date_choice_menu(prefix: str) -> InlineKeyboardMarkup:
-    return kb([
+    rows = [
         [("Bugün", f"{prefix}:date:today"), ("Dün", f"{prefix}:date:yesterday")],
         [("Özel Tarih", f"{prefix}:date:custom")],
-        [("Geri", "m:history" if prefix == "histadd" else "m:reminder"), ("İptal", "cancel")],
-    ])
+    ]
+    if prefix == "rem":
+        rows.append([("Her Gün", "rem:date:daily")])
+    rows.append([("Geri", "m:history" if prefix == "histadd" else "m:reminder"), ("İptal", "cancel")])
+    return kb(rows)
 
 
 def time_choice_menu() -> InlineKeyboardMarkup:
@@ -273,6 +278,14 @@ def ph_choice_menu() -> InlineKeyboardMarkup:
     return kb([
         [("5.0", "histadd:ph:5.0"), ("5.5", "histadd:ph:5.5"), ("6.0", "histadd:ph:6.0")],
         [("6.5", "histadd:ph:6.5"), ("7.0", "histadd:ph:7.0"), ("Ölçmedim", "histadd:ph:")],
+        [("Geri", "m:history"), ("İptal", "cancel")],
+    ])
+
+
+def histadd_continue_menu() -> InlineKeyboardMarkup:
+    return kb([
+        [("Başka Malzeme Ekle", "histadd:more")],
+        [("Devam Et", "histadd:done")],
         [("Geri", "m:history"), ("İptal", "cancel")],
     ])
 
@@ -422,7 +435,7 @@ def add_history(islem: str, malzeme: str = "", miktar: Any = "", birim: str = ""
     return item_id
 
 
-def use_stock(name: str, amount: float, unit: str, op_type: str, note: str = "", date: str | None = None, ph: str = "") -> tuple[bool, str, dict[str, Any] | None]:
+def use_stock(name: str, amount: float, unit: str, op_type: str, note: str = "", date: str | None = None, ph: str = "", record_history: bool = True) -> tuple[bool, str, dict[str, Any] | None]:
     item = find_inventory_by_name(name)
     if not item:
         return False, "Malzeme bulunamadı.", None
@@ -433,7 +446,8 @@ def use_stock(name: str, amount: float, unit: str, op_type: str, note: str = "",
     old_remaining = remaining_raw
 
     if remaining_raw.casefold() == "stok bol":
-        add_history(op_type, material, format_decimal(amount), unit, ph, note, date)
+        if record_history:
+            add_history(op_type, material, format_decimal(amount), unit, ph, note, date)
         return True, "Stok bol", {"material": material, "row": row_number, "old_remaining": old_remaining, "amount": amount, "unit": unit}
 
     try:
@@ -449,8 +463,25 @@ def use_stock(name: str, amount: float, unit: str, op_type: str, note: str = "",
     new_used = used + amount
     set_cell_by_header("inventory", row_number, "Kalan Miktar", format_decimal(new_remaining))
     set_cell_by_header("inventory", row_number, "Kullanılan", format_decimal(new_used))
-    add_history(op_type, material, format_decimal(amount), unit, ph, note, date)
+    if record_history:
+        add_history(op_type, material, format_decimal(amount), unit, ph, note, date)
     return True, f"{format_decimal(new_remaining)} {item.get('Birim', unit)}", {"material": material, "row": row_number, "old_remaining": old_remaining, "amount": amount, "unit": unit}
+
+
+def check_stock_available(name: str, amount: float) -> tuple[bool, str]:
+    item = find_inventory_by_name(name)
+    if not item:
+        return False, f"{name} bulunamadı."
+    remaining_raw = str(item.get("Kalan Miktar", "")).strip()
+    if remaining_raw.casefold() == "stok bol":
+        return True, ""
+    try:
+        remaining = parse_decimal(remaining_raw)
+    except Exception:
+        return False, f"{name} miktarı sayı değil: {remaining_raw}"
+    if amount > remaining:
+        return False, f"{name} için yetersiz stok. Kalan: {format_decimal(remaining)} {item.get('Birim', '')}"
+    return True, ""
 
 
 def inventory_buttons(action: str, page: int = 0) -> InlineKeyboardMarkup:
@@ -829,7 +860,7 @@ async def handle_history_callback(update: Update, context: ContextTypes.DEFAULT_
         return
     if data == "hist:add":
         context.user_data["flow"] = "histadd_date"
-        context.user_data["draft"] = {}
+        context.user_data["draft"] = {"items": []}
         await edit_or_send(update, "İşlem tarihi seç:", date_choice_menu("histadd"))
         return
     if data.startswith("histadd:date:"):
@@ -844,6 +875,16 @@ async def handle_history_callback(update: Update, context: ContextTypes.DEFAULT_
     if data.startswith("histadd:tur:"):
         context.user_data.setdefault("draft", {})["type"] = data.split(":", 2)[2]
         await edit_or_send(update, "Malzeme seç:", inventory_buttons("histadd"))
+        return
+    if data == "histadd:more":
+        await edit_or_send(update, "Eklemek istediğin diğer malzemeyi seç:", inventory_buttons("histadd"))
+        return
+    if data == "histadd:done":
+        items = context.user_data.get("draft", {}).get("items", [])
+        if not items:
+            await edit_or_send(update, "Devam etmek için en az bir malzeme eklemelisin.", inventory_buttons("histadd"))
+            return
+        await edit_or_send(update, "pH seç:", ph_choice_menu())
         return
     if data.startswith("histadd:ph:"):
         context.user_data.setdefault("draft", {})["ph"] = data.split(":", 2)[2]
@@ -990,7 +1031,13 @@ async def handle_reminder_callback(update: Update, context: ContextTypes.DEFAULT
             context.user_data["flow"] = "rem_custom_date"
             await edit_or_send(update, "Özel tarihi yaz. Örn: 14-06-2026", back_cancel("rem:add"))
             return
-        context.user_data.setdefault("draft", {})["date"] = today_str() if choice == "today" else (now() - timedelta(days=1)).strftime(DATE_FMT)
+        draft = context.user_data.setdefault("draft", {})
+        if choice == "daily":
+            draft["date"] = today_str()
+            draft["repeat"] = "günlük"
+        else:
+            draft["date"] = today_str() if choice == "today" else (now() - timedelta(days=1)).strftime(DATE_FMT)
+            draft["repeat"] = "tek"
         await edit_or_send(update, "Saat seç:", time_choice_menu())
         return
     if data.startswith("rem:time:"):
@@ -1055,7 +1102,14 @@ async def reminder_worker(app: Application) -> None:
                     if not due or not chat_id or due > current:
                         continue
                     await app.bot.send_message(chat_id=int(chat_id), text=f"Hatırlatma\n\nID {row_id_text(row)} - {row.get('Metin', '-')}")
-                    set_cell_by_header("reminders", int(row["_row"]), "Durum", "gönderildi")
+                    if str(row.get("Tekrar", "")).strip().casefold() in {"günlük", "gunluk", "her gün", "hergun", "daily"}:
+                        next_due = due
+                        while next_due <= current:
+                            next_due += timedelta(days=1)
+                        set_cell_by_header("reminders", int(row["_row"]), "Tarih", next_due.strftime(DATE_FMT))
+                        set_cell_by_header("reminders", int(row["_row"]), "Durum", "bekliyor")
+                    else:
+                        set_cell_by_header("reminders", int(row["_row"]), "Durum", "gönderildi")
                     log.info("Hatırlatma gönderildi: ID %s", row_id_text(row))
                 except Exception:
                     log.exception("Hatırlatma satırı işlenemedi: ID %s", row_id_text(row))
@@ -1299,17 +1353,65 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         except Exception:
             await update.effective_message.reply_text("Miktar sayı olmalı.", reply_markup=back_cancel("m:history"))
             return
-        context.user_data["draft"]["amount"] = amount
-        await update.effective_message.reply_text("pH seç:", reply_markup=ph_choice_menu())
+        d = context.user_data["draft"]
+        item = {
+            "material": d["current_material"],
+            "unit": d.get("current_unit", ""),
+            "amount": amount,
+        }
+        d.setdefault("items", []).append(item)
+        d.pop("current_material", None)
+        d.pop("current_unit", None)
+        summary = "\n".join(
+            f"- {format_decimal(i['amount'])} {i['unit']} {i['material']}" for i in d["items"]
+        )
+        await update.effective_message.reply_text(
+            f"Malzeme eklendi.\n\nSeçilenler:\n{summary}\n\nBaşka malzeme ekleyebilir veya devam edebilirsin.",
+            reply_markup=histadd_continue_menu(),
+        )
         return
     if flow == "histadd_note":
         d = context.user_data["draft"]
-        ok, result, undo = use_stock(d["material"], d["amount"], d["unit"], d["type"], "" if text == "-" else text, d["date"], d.get("ph", ""))
-        if ok and undo:
-            context.user_data["last_stock_use"] = undo
+        note = "" if text == "-" else text
+        items = d.get("items", [])
+        if not items:
+            await update.effective_message.reply_text("Kaydedilecek malzeme yok.", reply_markup=history_menu())
+            context.user_data.clear()
+            return
+        for item in items:
+            ok, error = check_stock_available(item["material"], item["amount"])
+            if not ok:
+                await update.effective_message.reply_text(error, reply_markup=history_menu())
+                return
+        results = []
+        undo_items = []
+        for item in items:
+            ok, result, undo = use_stock(
+                item["material"],
+                item["amount"],
+                item["unit"],
+                d["type"],
+                note,
+                d["date"],
+                d.get("ph", ""),
+                record_history=False,
+            )
+            if not ok:
+                await update.effective_message.reply_text(result, reply_markup=history_menu())
+                return
+            results.append(f"{format_decimal(item['amount'])} {item['unit']} {item['material']} (Kalan: {result})")
+            if undo:
+                undo_items.append(undo)
+        material_summary = "; ".join(f"{format_decimal(i['amount'])} {i['unit']} {i['material']}" for i in items)
+        add_history(d["type"], material_summary, "-", "", d.get("ph", ""), note, d["date"])
+        if undo_items:
+            context.user_data["last_stock_use"] = undo_items[-1]
         context.user_data.pop("flow", None)
         context.user_data.pop("draft", None)
-        await update.effective_message.reply_text(("İşlem kaydedildi ve stoktan düşüldü. Kalan: " + result) if ok else result, reply_markup=history_menu())
+        await update.effective_message.reply_text(
+            "İşlem kaydedildi ve stoktan düşüldü.\n\n" + "\n".join(results),
+            reply_markup=history_menu(),
+        )
         return
 
     if flow == "report_month":
@@ -1330,6 +1432,7 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             await update.effective_message.reply_text("Tarih anlaşılamadı. Örn: 14-06-2026", reply_markup=back_cancel("rem:add"))
             return
         context.user_data["draft"]["date"] = date
+        context.user_data["draft"]["repeat"] = "tek"
         await update.effective_message.reply_text("Saat seç:", reply_markup=time_choice_menu())
         return
     if flow == "rem_custom_time":
@@ -1351,10 +1454,12 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             "Metin": text,
             "Durum": "bekliyor",
             "Chat_ID": update.effective_chat.id,
+            "Tekrar": d.get("repeat", "tek"),
             "CreatedAt": now().isoformat(timespec="seconds"),
         })
         context.user_data.clear()
-        await update.effective_message.reply_text(f"Hatırlatma eklendi. ID {item_id} - {d['date']} {d['time']}", reply_markup=reminder_menu())
+        tekrar = "Her gün" if d.get("repeat") == "günlük" else "Tek seferlik"
+        await update.effective_message.reply_text(f"Hatırlatma eklendi. ID {item_id} - {d['date']} {d['time']} ({tekrar})", reply_markup=reminder_menu())
         return
     if flow == "rem_delete":
         await delete_by_id(update, "reminders", text, "Hatırlatma silindi.", reminder_menu())
@@ -1425,8 +1530,10 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 async def histadd_inventory_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, item: dict[str, Any]) -> None:
-    context.user_data.setdefault("draft", {})["material"] = item.get("Malzeme / Alet")
-    context.user_data["draft"]["unit"] = item.get("Birim", "")
+    draft = context.user_data.setdefault("draft", {"items": []})
+    draft.setdefault("items", [])
+    draft["current_material"] = item.get("Malzeme / Alet")
+    draft["current_unit"] = item.get("Birim", "")
     context.user_data["flow"] = "histadd_amount"
     await edit_or_send(update, f"Malzeme: {item.get('Malzeme / Alet')}\nMiktar yaz:", back_cancel("m:history"))
 
