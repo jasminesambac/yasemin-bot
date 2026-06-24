@@ -277,7 +277,8 @@ def time_choice_menu() -> InlineKeyboardMarkup:
 def ph_choice_menu() -> InlineKeyboardMarkup:
     return kb([
         [("5.0", "histadd:ph:5.0"), ("5.5", "histadd:ph:5.5"), ("6.0", "histadd:ph:6.0")],
-        [("6.5", "histadd:ph:6.5"), ("7.0", "histadd:ph:7.0"), ("Ölçmedim", "histadd:ph:")],
+        [("6.5", "histadd:ph:6.5"), ("7.0", "histadd:ph:7.0"), ("Özel pH", "histadd:ph_custom")],
+        [("Ölçmedim", "histadd:ph:")],
         [("Geri", "m:history"), ("İptal", "cancel")],
     ])
 
@@ -886,6 +887,10 @@ async def handle_history_callback(update: Update, context: ContextTypes.DEFAULT_
             return
         await edit_or_send(update, "pH seç:", ph_choice_menu())
         return
+    if data == "histadd:ph_custom":
+        context.user_data["flow"] = "histadd_custom_ph"
+        await edit_or_send(update, "pH değerini yaz. Örn: 6.3", back_cancel("m:history"))
+        return
     if data.startswith("histadd:ph:"):
         context.user_data.setdefault("draft", {})["ph"] = data.split(":", 2)[2]
         context.user_data["flow"] = "histadd_note"
@@ -1369,6 +1374,18 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             f"Malzeme eklendi.\n\nSeçilenler:\n{summary}\n\nBaşka malzeme ekleyebilir veya devam edebilirsin.",
             reply_markup=histadd_continue_menu(),
         )
+        return
+    if flow == "histadd_custom_ph":
+        try:
+            ph_value = parse_decimal(text)
+            if not 0 <= ph_value <= 14:
+                raise ValueError
+        except Exception:
+            await update.effective_message.reply_text("pH 0 ile 14 arasında sayı olmalı. Örn: 6.3", reply_markup=back_cancel("m:history"))
+            return
+        context.user_data.setdefault("draft", {})["ph"] = str(text).replace(",", ".")
+        context.user_data["flow"] = "histadd_note"
+        await update.effective_message.reply_text("Not yaz. Ne için yaptığını buraya yazabilirsin. Not yoksa '-' yaz.", reply_markup=back_cancel("m:history"))
         return
     if flow == "histadd_note":
         d = context.user_data["draft"]
