@@ -535,7 +535,11 @@ def inventory_buttons(action: str, page: int = 0) -> InlineKeyboardMarkup:
         nav.append(("Sonraki", f"invpage:{action}:{page + 1}"))
     if nav:
         rows.append(nav)
-    rows.append([("Geri", "m:stock"), ("İptal", "cancel")])
+    if action == "compadd":
+        rows.append([("Malzeme Kullanmadım / Devam Et", "compadd:done")])
+        rows.append([("Geri", "m:compost"), ("İptal", "cancel")])
+    else:
+        rows.append([("Geri", "m:stock"), ("İptal", "cancel")])
     return kb(rows)
 
 
@@ -1017,10 +1021,6 @@ async def handle_compost_callback(update: Update, context: ContextTypes.DEFAULT_
         await edit_or_send(update, "Eklemek istediğin diğer malzemeyi seç:", inventory_buttons("compadd"))
         return
     if data == "compadd:done":
-        items = context.user_data.get("draft", {}).get("items", [])
-        if not items:
-            await edit_or_send(update, "Devam etmek için en az bir malzeme eklemelisin.", inventory_buttons("compadd"))
-            return
         await edit_or_send(update, "pH seç:", ph_choice_menu("compadd"))
         return
     if data == "compadd:ph_custom":
@@ -1692,10 +1692,6 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         note = "" if text == "-" else text
         items = d.get("items", [])
         containers = d.get("containers", [])
-        if not items:
-            await update.effective_message.reply_text("Kaydedilecek malzeme yok.", reply_markup=compost_menu())
-            context.user_data.clear()
-            return
         for item in items:
             ok, error = check_stock_available(item["material"], item["amount"])
             if not ok:
@@ -1720,7 +1716,7 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             results.append(f"{format_decimal(item['amount'])} {item['unit']} {item['material']} (Kalan: {result})")
             if undo:
                 undo_items.append(undo)
-        material_summary = "; ".join(f"{format_decimal(i['amount'])} {i['unit']} {i['material']}" for i in items)
+        material_summary = "; ".join(f"{format_decimal(i['amount'])} {i['unit']} {i['material']}" for i in items) if items else "Malzeme kullanılmadı"
         container_summary = ", ".join(containers)
         full_note = f"Konteyner: {container_summary}"
         if note:
@@ -1748,8 +1744,9 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             context.user_data["last_stock_use"] = undo_items[-1]
         context.user_data.pop("flow", None)
         context.user_data.pop("draft", None)
+        result_text = "\n".join(results) if results else "Stoktan düşülen malzeme yok."
         await update.effective_message.reply_text(
-            f"Kompost işlemi kaydedildi. ID {item_id}\n\n" + "\n".join(results),
+            f"Kompost işlemi kaydedildi. ID {item_id}\n\n" + result_text,
             reply_markup=compost_menu(),
         )
         return
