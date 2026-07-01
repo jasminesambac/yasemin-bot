@@ -40,6 +40,7 @@ AGNES_MODEL = os.getenv("AGNES_MODEL", "agnes-2.0-flash").strip()
 
 INVENTORY_HEADERS = ["ID", "Kategori", "Malzeme / Alet", "Başlangıç Miktarı", "Kullanılan", "Kalan Miktar", "Birim", "Görevi / Not", "CreatedAt"]
 HISTORY_HEADERS = ["ID", "Tarih", "Islem", "Malzeme", "Miktar", "Birim", "pH", "Not", "CreatedAt"]
+KOMPOST_HEADERS = ["Tarih", "Islem", "Kullanilan_Malzeme_Miktar", "pH", "Not", "ID"]
 PH_HEADERS = ["ID", "Tarih", "Teneke_No", "pH", "Not", "CreatedAt"]
 REMINDER_HEADERS = ["ID", "Tarih", "Saat", "Metin", "Durum", "Chat_ID", "Tekrar", "CreatedAt"]
 
@@ -174,7 +175,8 @@ def main_menu() -> InlineKeyboardMarkup:
         [("📦 Stok", "m:stock"), ("🔬 pH", "m:ph")],
         [("📜 Geçmiş", "m:history"), ("📊 Rapor", "m:report")],
         [("⏰ Hatırlatma", "m:reminder"), ("🌤️ Hava", "m:weather")],
-        [("🤖 AI Sor", "m:ai"), ("💾 Yedekle", "backup")],
+        [("🪱 Kompost", "m:compost"), ("🤖 AI Sor", "m:ai")],
+        [("💾 Yedekle", "backup")],
     ])
 
 
@@ -201,6 +203,14 @@ def history_menu() -> InlineKeyboardMarkup:
         [("📜 Son 10 İşlem", "hist:last10"), ("📋 Tüm Geçmiş", "hist:all:0")],
         [("📅 Tarihli İşlemler", "hist:date"), ("❌ İşlem Sil", "hist:delete")],
         [("📝 İşlem Ekle", "hist:add")],
+        [("🔙 Geri", "m:main")],
+    ])
+
+
+def compost_menu() -> InlineKeyboardMarkup:
+    return kb([
+        [("İşlem Geçmişi", "comp:all:0"), ("İşlem Ekle", "comp:add")],
+        [("Tarihli İşlemler", "comp:date"), ("İşlem Sil", "comp:delete")],
         [("🔙 Geri", "m:main")],
     ])
 
@@ -262,7 +272,8 @@ def date_choice_menu(prefix: str) -> InlineKeyboardMarkup:
     ]
     if prefix == "rem":
         rows.append([("Her Gün", "rem:date:daily")])
-    rows.append([("Geri", "m:history" if prefix == "histadd" else "m:reminder"), ("İptal", "cancel")])
+    back_to = "m:history" if prefix == "histadd" else "m:compost" if prefix == "compadd" else "m:reminder"
+    rows.append([("Geri", back_to), ("İptal", "cancel")])
     return kb(rows)
 
 
@@ -274,13 +285,36 @@ def time_choice_menu() -> InlineKeyboardMarkup:
     ])
 
 
-def ph_choice_menu() -> InlineKeyboardMarkup:
+def ph_choice_menu(prefix: str = "histadd") -> InlineKeyboardMarkup:
+    back_to = "m:compost" if prefix == "compadd" else "m:history"
     return kb([
-        [("5.0", "histadd:ph:5.0"), ("5.5", "histadd:ph:5.5"), ("6.0", "histadd:ph:6.0")],
-        [("6.5", "histadd:ph:6.5"), ("7.0", "histadd:ph:7.0"), ("Özel pH", "histadd:ph_custom")],
-        [("Ölçmedim", "histadd:ph:")],
-        [("Geri", "m:history"), ("İptal", "cancel")],
+        [("5.0", f"{prefix}:ph:5.0"), ("5.5", f"{prefix}:ph:5.5"), ("6.0", f"{prefix}:ph:6.0")],
+        [("6.5", f"{prefix}:ph:6.5"), ("7.0", f"{prefix}:ph:7.0"), ("Özel pH", f"{prefix}:ph_custom")],
+        [("Ölçmedim", f"{prefix}:ph:")],
+        [("Geri", back_to), ("İptal", "cancel")],
     ])
+
+
+def compost_type_menu() -> InlineKeyboardMarkup:
+    return kb([
+        [("Kompost Karıştırma", "compadd:tur:Kompost Karıştırma")],
+        [("Kompost Kurma", "compadd:tur:Kompost Kurma")],
+        [("Kompost Sulama", "compadd:tur:Kompost Sulama")],
+        [("Kompost Kontrolü", "compadd:tur:Kompost Kontrolü")],
+        [("Diğer", "compadd:tur:Diğer")],
+        [("Geri", "m:compost"), ("İptal", "cancel")],
+    ])
+
+
+def compost_container_menu(selected: list[str] | None = None) -> InlineKeyboardMarkup:
+    selected = selected or []
+    rows = []
+    for container in ["Konteyner 1", "Konteyner 2", "Konteyner 3"]:
+        label = f"✓ {container}" if container in selected else container
+        rows.append([(label, f"compadd:container:{container}")])
+    rows.append([("Devam Et", "compadd:containers_done")])
+    rows.append([("Geri", "m:compost"), ("İptal", "cancel")])
+    return kb(rows)
 
 
 def histadd_continue_menu() -> InlineKeyboardMarkup:
@@ -311,6 +345,7 @@ def init_sheets() -> None:
     wanted = {
         "inventory": INVENTORY_HEADERS,
         "history": HISTORY_HEADERS,
+        "Kompost": KOMPOST_HEADERS,
         "ph_records": PH_HEADERS,
         "reminders": REMINDER_HEADERS,
     }
@@ -505,7 +540,9 @@ def inventory_buttons(action: str, page: int = 0) -> InlineKeyboardMarkup:
 
 
 def teneke_buttons(action: str) -> InlineKeyboardMarkup:
+    fixed = ["Konteyner 1", "Konteyner 2", "Konteyner 3"]
     tenekeler = sorted({str(r.get("Teneke_No", "")).strip() for r in records("ph_records") if str(r.get("Teneke_No", "")).strip()}, key=lambda x: int(x) if x.isdigit() else 999999)
+    tenekeler = fixed + [t for t in tenekeler if t not in fixed]
     rows: list[list[tuple[str, str]]] = []
     line: list[tuple[str, str]] = []
     for teneke in tenekeler[:40]:
@@ -550,6 +587,19 @@ def history_unit(row: dict[str, Any]) -> str:
     return parts[1] if len(parts) >= 2 else ""
 
 
+def operational_records() -> list[dict[str, Any]]:
+    rows = []
+    for row in records("history"):
+        item = dict(row)
+        item["_source"] = "Geçmiş"
+        rows.append(item)
+    for row in records("Kompost"):
+        item = dict(row)
+        item["_source"] = "Kompost"
+        rows.append(item)
+    return rows
+
+
 async def show_home(update: Update) -> None:
     await edit_or_send(update, "Yasemin Asistan\n\nBir işlem seç:", main_menu())
 
@@ -590,6 +640,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         context.user_data.clear()
         await edit_or_send(update, "Geçmiş Yönetimi", history_menu())
         return
+    if data == "m:compost":
+        context.user_data.clear()
+        await edit_or_send(update, "Kompost", compost_menu())
+        return
     if data == "m:report":
         context.user_data.clear()
         await edit_or_send(update, "Raporlar", report_menu())
@@ -624,6 +678,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
     if data.startswith("hist:") or data.startswith("histadd:"):
         await handle_history_callback(update, context, data)
+        return
+    if data.startswith("comp:") or data.startswith("compadd:"):
+        await handle_compost_callback(update, context, data)
         return
     if data.startswith("report:"):
         await handle_report_callback(update, context, data)
@@ -776,9 +833,8 @@ async def handle_ph_callback(update: Update, context: ContextTypes.DEFAULT_TYPE,
                 await update.effective_message.reply_text(part)
         return
     if data == "ph:add":
-        context.user_data["flow"] = "ph_add_teneke"
         context.user_data["draft"] = {}
-        await edit_or_send(update, "Teneke numarasını yaz:", back_cancel("m:ph"))
+        await edit_or_send(update, "Teneke veya konteyner seç:", teneke_buttons("add"))
         return
     if data == "ph:delete":
         await edit_or_send(update, "pH kaydı nasıl silinsin?", kb([
@@ -799,6 +855,11 @@ async def handle_ph_callback(update: Update, context: ContextTypes.DEFAULT_TYPE,
         if teneke == "custom":
             context.user_data["flow"] = f"ph_{action}_custom"
             await edit_or_send(update, "Teneke numarasını yaz:", back_cancel("m:ph"))
+            return
+        if action == "add":
+            context.user_data["draft"] = {"teneke": teneke}
+            context.user_data["flow"] = "ph_add_value"
+            await edit_or_send(update, f"{teneke}\n\npH değerini yaz. Örn: 6.5", back_cancel("m:ph"))
             return
         if action == "delete_last":
             await delete_last_ph_for_teneke(update, teneke)
@@ -898,6 +959,81 @@ async def handle_history_callback(update: Update, context: ContextTypes.DEFAULT_
         return
 
 
+async def handle_compost_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, data: str) -> None:
+    if data.startswith("comp:all:"):
+        try:
+            page = int(data.rsplit(":", 1)[1])
+        except ValueError:
+            page = 0
+        await show_compost_page(update, page)
+        return
+    if data == "comp:file":
+        await send_compost_file(update)
+        return
+    if data == "comp:add":
+        context.user_data["flow"] = "compadd_date"
+        context.user_data["draft"] = {"items": [], "containers": []}
+        await edit_or_send(update, "Kompost işlem tarihi seç:", date_choice_menu("compadd"))
+        return
+    if data == "comp:date":
+        context.user_data["flow"] = "compost_date"
+        await edit_or_send(update, "Tarih yaz. Örn: 14-06-2026 veya 2026-06-14", back_cancel("m:compost"))
+        return
+    if data == "comp:delete":
+        context.user_data["flow"] = "compost_delete"
+        await edit_or_send(update, "Silmek istediğin Kompost işlem ID numarasını yaz.", back_cancel("m:compost"))
+        return
+    if data.startswith("compadd:date:"):
+        choice = data.rsplit(":", 1)[1]
+        if choice == "custom":
+            context.user_data["flow"] = "compadd_custom_date"
+            await edit_or_send(update, "Özel tarihi yaz. Örn: 14-06-2026", back_cancel("comp:add"))
+            return
+        context.user_data.setdefault("draft", {"items": [], "containers": []})["date"] = today_str() if choice == "today" else (now() - timedelta(days=1)).strftime(DATE_FMT)
+        await edit_or_send(update, "Konteyner seç. Birden fazla seçebilirsin:", compost_container_menu(context.user_data["draft"].get("containers", [])))
+        return
+    if data.startswith("compadd:container:"):
+        container = data.split(":", 2)[2]
+        draft = context.user_data.setdefault("draft", {"items": [], "containers": []})
+        containers = draft.setdefault("containers", [])
+        if container in containers:
+            containers.remove(container)
+        else:
+            containers.append(container)
+        await edit_or_send(update, "Konteyner seç. Birden fazla seçebilirsin:", compost_container_menu(containers))
+        return
+    if data == "compadd:containers_done":
+        containers = context.user_data.get("draft", {}).get("containers", [])
+        if not containers:
+            await edit_or_send(update, "Devam etmek için en az bir konteyner seçmelisin.", compost_container_menu([]))
+            return
+        await edit_or_send(update, "Kompost işlem türü seç:", compost_type_menu())
+        return
+    if data.startswith("compadd:tur:"):
+        context.user_data.setdefault("draft", {"items": [], "containers": []})["type"] = data.split(":", 2)[2]
+        await edit_or_send(update, "Malzeme seç:", inventory_buttons("compadd"))
+        return
+    if data == "compadd:more":
+        await edit_or_send(update, "Eklemek istediğin diğer malzemeyi seç:", inventory_buttons("compadd"))
+        return
+    if data == "compadd:done":
+        items = context.user_data.get("draft", {}).get("items", [])
+        if not items:
+            await edit_or_send(update, "Devam etmek için en az bir malzeme eklemelisin.", inventory_buttons("compadd"))
+            return
+        await edit_or_send(update, "pH seç:", ph_choice_menu("compadd"))
+        return
+    if data == "compadd:ph_custom":
+        context.user_data["flow"] = "compadd_custom_ph"
+        await edit_or_send(update, "pH değerini yaz. Örn: 6.8", back_cancel("m:compost"))
+        return
+    if data.startswith("compadd:ph:"):
+        context.user_data.setdefault("draft", {})["ph"] = data.split(":", 2)[2]
+        context.user_data["flow"] = "compadd_note"
+        await edit_or_send(update, "Not yaz. Not yoksa '-' yaz.", back_cancel("m:compost"))
+        return
+
+
 async def show_history(update: Update, count: int) -> None:
     rows = records("history")
     if not rows:
@@ -975,19 +1111,70 @@ async def send_history_file(update: Update) -> None:
     await message.reply_document(InputFile(buffer, filename=f"tum_gecmis_{today_str()}.txt"), caption="Tüm geçmiş dosyası hazır.")
 
 
+def compost_row_text(row: dict[str, Any]) -> str:
+    text = f"ID {row_id_text(row)} - {row.get('Tarih', '-')}: {row.get('Islem', '-')}\n"
+    text += f"{history_material(row) or '-'}"
+    if row.get("pH"):
+        text += f" | pH {row.get('pH')}"
+    if row.get("Not"):
+        text += f"\nNot: {row.get('Not')}"
+    return text
+
+
+async def show_compost_page(update: Update, page: int = 0, page_size: int = 10) -> None:
+    rows = records("Kompost")
+    if not rows:
+        await edit_or_send(update, "Kompost kaydı yok.", compost_menu())
+        return
+    total = len(rows)
+    total_pages = max(1, (total + page_size - 1) // page_size)
+    page = max(0, min(page, total_pages - 1))
+    page_rows = rows[::-1][page * page_size:(page + 1) * page_size]
+    text = f"Kompost İşlem Geçmişi\nSayfa {page + 1}/{total_pages} - Toplam {total} kayıt\n\n"
+    for row in page_rows:
+        text += compost_row_text(row) + "\n\n"
+    nav: list[tuple[str, str]] = []
+    if page > 0:
+        nav.append(("Önceki", f"comp:all:{page - 1}"))
+    if page < total_pages - 1:
+        nav.append(("Sonraki", f"comp:all:{page + 1}"))
+    rows_kb = []
+    if nav:
+        rows_kb.append(nav)
+    rows_kb.append([("Tam Kompost Geçmişi TXT", "comp:file")])
+    rows_kb.append([("Geri", "m:compost"), ("Ana Menü", "m:main")])
+    await edit_or_send(update, text, kb(rows_kb))
+
+
+async def send_compost_file(update: Update) -> None:
+    message = update.effective_message
+    if not message:
+        return
+    rows = records("Kompost")
+    if not rows:
+        await message.reply_text("Kompost kaydı yok.", reply_markup=compost_menu())
+        return
+    text = f"Kompost Tüm Geçmiş - Toplam {len(rows)} kayıt\n\n"
+    for row in rows[::-1]:
+        text += compost_row_text(row) + "\n\n"
+    buffer = io.BytesIO(text.encode("utf-8-sig"))
+    await message.reply_document(InputFile(buffer, filename=f"kompost_gecmis_{today_str()}.txt"), caption="Kompost geçmiş dosyası hazır.")
+
+
 async def handle_report_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, data: str) -> None:
     if data == "report:daily":
-        rows = [r for r in records("history") if r.get("Tarih") == today_str()]
+        rows = [r for r in operational_records() if parse_date(str(r.get("Tarih", ""))) == today_str()]
         if not rows:
             await edit_or_send(update, f"{today_str()} için işlem yok.", report_menu())
             return
         text = f"Günlük Rapor - {today_str()}\n\nToplam işlem: {len(rows)}\n\n"
         for row in rows:
-            text += f"ID {row_id_text(row)} - {row.get('Islem', '-')}: {history_material(row) or '-'} {history_amount(row)} {history_unit(row)}\n"
+            source = row.get("_source", "Geçmiş")
+            text += f"[{source}] ID {row_id_text(row)} - {row.get('Islem', '-')}: {history_material(row) or '-'} {history_amount(row)} {history_unit(row)}\n"
         await edit_or_send(update, text, report_menu())
         return
     if data == "report:stats":
-        rows = records("history")
+        rows = operational_records()
         if not rows:
             await edit_or_send(update, "İstatistik için kayıt yok.", report_menu())
             return
@@ -1082,6 +1269,7 @@ async def send_backup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         for filename, sheet_name in [
             ("inventory.csv", "inventory"),
             ("history.csv", "history"),
+            ("kompost.csv", "Kompost"),
             ("ph_records.csv", "ph_records"),
             ("reminders.csv", "reminders"),
         ]:
@@ -1285,6 +1473,11 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if flow.startswith("ph_") and flow.endswith("_custom"):
         action = flow.removeprefix("ph_").removesuffix("_custom")
         context.user_data.pop("flow", None)
+        if action == "add":
+            context.user_data["draft"] = {"teneke": text}
+            context.user_data["flow"] = "ph_add_value"
+            await update.effective_message.reply_text(f"{text}\n\npH değerini yaz. Örn: 6.5", reply_markup=back_cancel("m:ph"))
+            return
         if action == "delete_last":
             await delete_last_ph_for_teneke(update, text)
             return
@@ -1431,6 +1624,136 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         )
         return
 
+    if flow == "compost_date":
+        date = parse_date(text)
+        if not date:
+            await update.effective_message.reply_text("Tarih anlaşılamadı. Örn: 14-06-2026", reply_markup=back_cancel("m:compost"))
+            return
+        rows = [r for r in records("Kompost") if parse_date(str(r.get("Tarih", ""))) == date]
+        if not rows:
+            await update.effective_message.reply_text(f"{date} tarihinde Kompost işlemi yok.", reply_markup=compost_menu())
+            return
+        out = f"{date} Kompost İşlemleri\n\n"
+        for row in rows:
+            out += compost_row_text(row) + "\n\n"
+        await send_chunks(update, out, compost_menu())
+        return
+    if flow == "compost_delete":
+        await delete_by_id(update, "Kompost", text, "Kompost işlemi silindi.", compost_menu())
+        context.user_data.clear()
+        return
+    if flow == "compadd_custom_date":
+        date = parse_date(text)
+        if not date:
+            await update.effective_message.reply_text("Tarih anlaşılamadı. Örn: 14-06-2026", reply_markup=back_cancel("comp:add"))
+            return
+        context.user_data["draft"]["date"] = date
+        await update.effective_message.reply_text("Konteyner seç. Birden fazla seçebilirsin:", reply_markup=compost_container_menu(context.user_data["draft"].get("containers", [])))
+        return
+    if flow == "compadd_amount":
+        try:
+            amount = parse_decimal(text)
+        except Exception:
+            await update.effective_message.reply_text("Miktar sayı olmalı.", reply_markup=back_cancel("m:compost"))
+            return
+        d = context.user_data["draft"]
+        item = {
+            "material": d["current_material"],
+            "unit": d.get("current_unit", ""),
+            "amount": amount,
+        }
+        d.setdefault("items", []).append(item)
+        d.pop("current_material", None)
+        d.pop("current_unit", None)
+        summary = "\n".join(f"- {format_decimal(i['amount'])} {i['unit']} {i['material']}" for i in d["items"])
+        await update.effective_message.reply_text(
+            f"Malzeme eklendi.\n\nSeçilenler:\n{summary}\n\nBaşka malzeme ekleyebilir veya devam edebilirsin.",
+            reply_markup=kb([
+                [("Başka Malzeme Ekle", "compadd:more")],
+                [("Devam Et", "compadd:done")],
+                [("Geri", "m:compost"), ("İptal", "cancel")],
+            ]),
+        )
+        return
+    if flow == "compadd_custom_ph":
+        try:
+            ph_value = parse_decimal(text)
+            if not 0 <= ph_value <= 14:
+                raise ValueError
+        except Exception:
+            await update.effective_message.reply_text("pH 0 ile 14 arasında sayı olmalı. Örn: 6.8", reply_markup=back_cancel("m:compost"))
+            return
+        context.user_data.setdefault("draft", {})["ph"] = str(text).replace(",", ".")
+        context.user_data["flow"] = "compadd_note"
+        await update.effective_message.reply_text("Not yaz. Not yoksa '-' yaz.", reply_markup=back_cancel("m:compost"))
+        return
+    if flow == "compadd_note":
+        d = context.user_data["draft"]
+        note = "" if text == "-" else text
+        items = d.get("items", [])
+        containers = d.get("containers", [])
+        if not items:
+            await update.effective_message.reply_text("Kaydedilecek malzeme yok.", reply_markup=compost_menu())
+            context.user_data.clear()
+            return
+        for item in items:
+            ok, error = check_stock_available(item["material"], item["amount"])
+            if not ok:
+                await update.effective_message.reply_text(error, reply_markup=compost_menu())
+                return
+        results = []
+        undo_items = []
+        for item in items:
+            ok, result, undo = use_stock(
+                item["material"],
+                item["amount"],
+                item["unit"],
+                d["type"],
+                note,
+                d["date"],
+                d.get("ph", ""),
+                record_history=False,
+            )
+            if not ok:
+                await update.effective_message.reply_text(result, reply_markup=compost_menu())
+                return
+            results.append(f"{format_decimal(item['amount'])} {item['unit']} {item['material']} (Kalan: {result})")
+            if undo:
+                undo_items.append(undo)
+        material_summary = "; ".join(f"{format_decimal(i['amount'])} {i['unit']} {i['material']}" for i in items)
+        container_summary = ", ".join(containers)
+        full_note = f"Konteyner: {container_summary}"
+        if note:
+            full_note += f"\n{note}"
+        item_id = next_id("Kompost")
+        append_record("Kompost", KOMPOST_HEADERS, {
+            "Tarih": d["date"],
+            "Islem": d["type"],
+            "Kullanilan_Malzeme_Miktar": material_summary,
+            "pH": d.get("ph", ""),
+            "Not": full_note,
+            "ID": item_id,
+        })
+        if d.get("ph"):
+            for container in containers:
+                append_record("ph_records", PH_HEADERS, {
+                    "ID": next_id("ph_records"),
+                    "Tarih": d["date"],
+                    "Teneke_No": container,
+                    "pH": d.get("ph", ""),
+                    "Not": f"Kompost ID {item_id} - {d['type']}",
+                    "CreatedAt": now().isoformat(timespec="seconds"),
+                })
+        if undo_items:
+            context.user_data["last_stock_use"] = undo_items[-1]
+        context.user_data.pop("flow", None)
+        context.user_data.pop("draft", None)
+        await update.effective_message.reply_text(
+            f"Kompost işlemi kaydedildi. ID {item_id}\n\n" + "\n".join(results),
+            reply_markup=compost_menu(),
+        )
+        return
+
     if flow == "report_month":
         parsed = parse_month(text)
         if not parsed:
@@ -1505,7 +1828,7 @@ async def delete_by_id(update: Update, sheet_name: str, id_text: str, success: s
 
 async def show_month_report(update: Update, month: int, year: int) -> None:
     rows = []
-    for row in records("history"):
+    for row in operational_records():
         date = parse_date(str(row.get("Tarih", "")))
         if not date:
             continue
@@ -1530,13 +1853,14 @@ async def show_month_report(update: Update, month: int, year: int) -> None:
 async def show_stock_report(update: Update, name: str) -> None:
     item = find_inventory_by_name(name)
     material = item.get("Malzeme / Alet", name) if item else name
-    rows = [r for r in records("history") if normalize_name(history_material(r)) == normalize_name(material)]
+    rows = [r for r in operational_records() if normalize_name(material) in normalize_name(history_material(r))]
     if not rows:
         await update.effective_message.reply_text("Bu malzeme için kullanım geçmişi bulunamadı.", reply_markup=report_menu())
         return
     text = f"{material} - Son 10 Kullanım\n\n"
     for row in rows[-10:][::-1]:
-        text += f"ID {row_id_text(row)} - {row.get('Tarih', '-')}: {row.get('Islem', '-')} {history_amount(row)} {history_unit(row)}\n"
+        source = row.get("_source", "Geçmiş")
+        text += f"[{source}] ID {row_id_text(row)} - {row.get('Tarih', '-')}: {row.get('Islem', '-')} {history_material(row)}\n"
     await update.effective_message.reply_text(text, reply_markup=report_menu())
 
 
@@ -1553,6 +1877,16 @@ async def histadd_inventory_callback(update: Update, context: ContextTypes.DEFAU
     draft["current_unit"] = item.get("Birim", "")
     context.user_data["flow"] = "histadd_amount"
     await edit_or_send(update, f"Malzeme: {item.get('Malzeme / Alet')}\nMiktar yaz:", back_cancel("m:history"))
+
+
+async def compadd_inventory_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, item: dict[str, Any]) -> None:
+    draft = context.user_data.setdefault("draft", {"items": [], "containers": []})
+    draft.setdefault("items", [])
+    draft.setdefault("containers", [])
+    draft["current_material"] = item.get("Malzeme / Alet")
+    draft["current_unit"] = item.get("Birim", "")
+    context.user_data["flow"] = "compadd_amount"
+    await edit_or_send(update, f"Malzeme: {item.get('Malzeme / Alet')}\nMiktar yaz:", back_cancel("m:compost"))
 
 
 async def reportstock_inventory_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, item: dict[str, Any]) -> None:
@@ -1574,6 +1908,9 @@ async def handle_inventory_callback(update: Update, context: ContextTypes.DEFAUL
         return
     if action == "histadd":
         await histadd_inventory_callback(update, context, item)
+        return
+    if action == "compadd":
+        await compadd_inventory_callback(update, context, item)
         return
     if action == "reportstock":
         await reportstock_inventory_callback(update, context, item)
