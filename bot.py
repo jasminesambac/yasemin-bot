@@ -54,6 +54,7 @@ RECIPE_HEADERS = ["ID", "Ad", "Islem", "Malzeme_Miktar", "pH", "Not", "Durum", "
 ISSUE_HEADERS = ["ID", "Tarih", "Alan", "Baslik", "Not", "Durum", "CreatedAt", "ClosedAt"]
 DIARY_HEADERS = ["ID", "Tarih", "Not", "CreatedAt"]
 ESSENCE_HEADERS = ["ID", "Baslangic", "Cicek", "Yag", "Kap", "Gun", "Not", "Durum", "CreatedAt", "ClosedAt"]
+ALERT_HEADERS = ["Key", "Value", "UpdatedAt"]
 
 SHEET: dict[str, gspread.Worksheet] = {}
 AI_CLIENT = None
@@ -594,6 +595,7 @@ def init_sheets() -> None:
         "issues": ISSUE_HEADERS,
         "diary": DIARY_HEADERS,
         "essences": ESSENCE_HEADERS,
+        "alerts": ALERT_HEADERS,
     }
 
     try:
@@ -699,6 +701,22 @@ def set_cell_by_header(sheet_name: str, row_number: int, header: str, value: Any
         header_row.append(header)
     col = header_row.index(header) + 1
     SHEET[sheet_name].update_cell(row_number, col, value)
+
+
+def alert_value(key: str) -> str:
+    for row in records("alerts"):
+        if str(row.get("Key", "")) == key:
+            return str(row.get("Value", ""))
+    return ""
+
+
+def set_alert_value(key: str, value: str) -> None:
+    for row in records("alerts"):
+        if str(row.get("Key", "")) == key:
+            set_cell_by_header("alerts", int(row["_row"]), "Value", value)
+            set_cell_by_header("alerts", int(row["_row"]), "UpdatedAt", now().isoformat(timespec="seconds"))
+            return
+    append_record("alerts", ALERT_HEADERS, {"Key": key, "Value": value, "UpdatedAt": now().isoformat(timespec="seconds")})
 
 
 def add_history(islem: str, malzeme: str = "", miktar: Any = "", birim: str = "", ph: str = "", note: str = "", date: str | None = None) -> int:
@@ -985,6 +1003,8 @@ async def show_today(update: Update) -> None:
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     context.user_data.clear()
+    if update.effective_chat:
+        set_alert_value("stock_chat_id", str(update.effective_chat.id))
     await show_home(update)
 
 
@@ -2286,6 +2306,7 @@ async def send_backup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             ("issues.csv", "issues"),
             ("diary.csv", "diary"),
             ("essences.csv", "essences"),
+            ("alerts.csv", "alerts"),
         ]:
             out = io.StringIO()
             writer = csv.writer(out)
@@ -2340,8 +2361,42 @@ async def reminder_worker(app: Application) -> None:
         await asyncio.sleep(15)
 
 
+async def stock_alert_worker(app: Application) -> None:
+    while True:
+        try:
+            chat_id = alert_value("stock_chat_id")
+            if chat_id:
+                sent = {x for x in alert_value("stock_sent").split(",") if x}
+                changed = False
+                for item in records("inventory"):
+                    item_id = row_id_text(item)
+                    raw = str(item.get("Kalan Miktar", "")).strip()
+                    if not raw or raw.casefold() == "stok bol":
+                        continue
+                    try:
+                        remaining = parse_decimal(raw)
+                    except Exception:
+                        continue
+                    if remaining <= 1 and item_id not in sent:
+                        await app.bot.send_message(
+                            chat_id=int(chat_id),
+                            text=f"Kritik stok uyarısı\n\nID {item_id} - {item.get('Malzeme / Alet','-')}: {format_decimal(remaining)} {item.get('Birim','')}",
+                        )
+                        sent.add(item_id)
+                        changed = True
+                    if remaining > 1 and item_id in sent:
+                        sent.remove(item_id)
+                        changed = True
+                if changed:
+                    set_alert_value("stock_sent", ",".join(sorted(sent)))
+        except Exception:
+            log.exception("Kritik stok kontrolünde hata")
+        await asyncio.sleep(60)
+
+
 async def post_init(app: Application) -> None:
     app.create_task(reminder_worker(app))
+    app.create_task(stock_alert_worker(app))
 
 
 async def ask_ai(question: str, user_id: int, context: ContextTypes.DEFAULT_TYPE) -> str:
