@@ -48,6 +48,7 @@ KOMPOST_HEADERS = ["Tarih", "Islem", "Kullanilan_Malzeme_Miktar", "pH", "Not", "
 PH_HEADERS = ["ID", "Tarih", "Teneke_No", "pH", "Not", "CreatedAt"]
 REMINDER_HEADERS = ["ID", "Tarih", "Saat", "Metin", "Durum", "Chat_ID", "Tekrar", "Hafta_Gunu", "Ay_Gunu", "CreatedAt"]
 OBSERVATION_HEADERS = ["ID", "Tarih", "Kategori", "Not", "Foto_File_ID", "AI_Yorum", "CreatedAt"]
+PLAN_HEADERS = ["ID", "Tarih", "Islem", "Hedef", "Malzeme_Miktar", "pH", "Not", "Durum", "CreatedAt", "CompletedAt"]
 
 SHEET: dict[str, gspread.Worksheet] = {}
 AI_CLIENT = None
@@ -228,8 +229,9 @@ def main_menu() -> InlineKeyboardMarkup:
         [("📦 Stok", "m:stock"), ("🔬 pH", "m:ph")],
         [("📜 Geçmiş", "m:history"), ("📊 Rapor", "m:report")],
         [("⏰ Hatırlatma", "m:reminder"), ("🌤️ Hava", "m:weather")],
-        [("🪱 Kompost", "m:compost"), ("📸 Gözlem", "m:observation")],
-        [("🤖 AI Sor", "m:ai"), ("💾 Yedekle", "backup")],
+        [("🪱 Kompost", "m:compost"), ("🗓️ Plan", "m:plan")],
+        [("📸 Gözlem", "m:observation"), ("🤖 AI Sor", "m:ai")],
+        [("💾 Yedekle", "backup"), ("🧭 Durum", "m:status")],
     ])
 
 
@@ -268,6 +270,15 @@ def compost_menu() -> InlineKeyboardMarkup:
     ])
 
 
+def plan_menu() -> InlineKeyboardMarkup:
+    return kb([
+        [("➕ Plan Ekle", "plan:add"), ("📋 Yaklaşan Planlar", "plan:upcoming")],
+        [("📅 Tarihli Planlar", "plan:date"), ("✅ Planı Tamamla", "plan:complete")],
+        [("❌ Plan Sil", "plan:delete")],
+        [("🔙 Geri", "m:main")],
+    ])
+
+
 def report_menu() -> InlineKeyboardMarkup:
     return kb([
         [("📊 Aylık Rapor", "report:month"), ("📅 Günlük Rapor", "report:daily")],
@@ -289,6 +300,15 @@ def observation_menu() -> InlineKeyboardMarkup:
         [("📷 Fotoğraflı Gözlem Ekle", "obs:add"), ("🤖 Fotoğrafı AI Yorumla", "obs:ai")],
         [("📋 Gözlem Geçmişi", "obs:all:0"), ("📅 Tarihli Gözlemler", "obs:date")],
         [("❌ Gözlem Sil", "obs:delete")],
+        [("🔙 Geri", "m:main")],
+    ])
+
+
+def ai_menu() -> InlineKeyboardMarkup:
+    return kb([
+        [("Agnes AI", "ai:agnes"), ("Gemini", "ai:gemini")],
+        [("İkisine de Sor", "ai:both")],
+        [("AI Hafızayı Temizle", "ai:clear")],
         [("🔙 Geri", "m:main")],
     ])
 
@@ -317,13 +337,14 @@ def unit_menu(back_to: str = "stock:add") -> InlineKeyboardMarkup:
 
 
 def operation_type_menu(prefix: str) -> InlineKeyboardMarkup:
+    back_to = "m:stock" if prefix == "use" else "m:plan" if prefix == "planadd" else "m:history"
     return kb([
         [("Sulama", f"{prefix}:tur:Sulama"), ("Gübreleme", f"{prefix}:tur:Gübreleme")],
         [("İlaçlama", f"{prefix}:tur:İlaçlama"), ("Hasat", f"{prefix}:tur:Hasat")],
         [("Toprak İşlemi", f"{prefix}:tur:Toprak İşlemi"), ("Çelik Alma", f"{prefix}:tur:Çelik Alma")],
         [("Çelik Kontrol", f"{prefix}:tur:Çelik Kontrol"), ("Sisleme", f"{prefix}:tur:Sisleme")],
         [("Diğer", f"{prefix}:tur:Diğer")],
-        [("Geri", "m:stock" if prefix == "use" else "m:history"), ("İptal", "cancel")],
+        [("Geri", back_to), ("İptal", "cancel")],
     ])
 
 
@@ -335,7 +356,7 @@ def date_choice_menu(prefix: str) -> InlineKeyboardMarkup:
     if prefix == "rem":
         rows.append([("Her Gün", "rem:date:daily"), ("Haftalık", "rem:date:weekly")])
         rows.append([("Aylık", "rem:date:monthly")])
-    back_to = "m:history" if prefix == "histadd" else "m:compost" if prefix == "compadd" else "m:reminder"
+    back_to = "m:history" if prefix == "histadd" else "m:compost" if prefix == "compadd" else "m:plan" if prefix == "planadd" else "m:reminder"
     rows.append([("Geri", back_to), ("İptal", "cancel")])
     return kb(rows)
 
@@ -389,7 +410,7 @@ def time_choice_menu() -> InlineKeyboardMarkup:
 
 
 def ph_choice_menu(prefix: str = "histadd") -> InlineKeyboardMarkup:
-    back_to = "m:compost" if prefix == "compadd" else "m:history"
+    back_to = "m:compost" if prefix == "compadd" else "m:plan" if prefix == "planadd" else "m:history"
     return kb([
         [("5.0", f"{prefix}:ph:5.0"), ("5.5", f"{prefix}:ph:5.5"), ("6.0", f"{prefix}:ph:6.0")],
         [("6.5", f"{prefix}:ph:6.5"), ("7.0", f"{prefix}:ph:7.0"), ("Özel pH", f"{prefix}:ph_custom")],
@@ -428,6 +449,14 @@ def histadd_continue_menu() -> InlineKeyboardMarkup:
     ])
 
 
+def planadd_continue_menu() -> InlineKeyboardMarkup:
+    return kb([
+        [("Başka Malzeme Ekle", "planadd:more")],
+        [("Devam Et", "planadd:done")],
+        [("Geri", "m:plan"), ("İptal", "cancel")],
+    ])
+
+
 def city_menu(prefix: str) -> InlineKeyboardMarkup:
     cities = ["İstanbul", "Ankara", "İzmir", "Bursa", "Antalya", "Adana", "Konya", "Trabzon"]
     rows = []
@@ -452,6 +481,7 @@ def init_sheets() -> None:
         "ph_records": PH_HEADERS,
         "reminders": REMINDER_HEADERS,
         "observations": OBSERVATION_HEADERS,
+        "plans": PLAN_HEADERS,
     }
 
     try:
@@ -642,13 +672,16 @@ def inventory_buttons(action: str, page: int = 0) -> InlineKeyboardMarkup:
     if action == "compadd":
         rows.append([("Malzeme Kullanmadım / Devam Et", "compadd:done")])
         rows.append([("Geri", "m:compost"), ("İptal", "cancel")])
+    elif action == "planadd":
+        rows.append([("Malzeme Kullanmayacağım / Devam Et", "planadd:done")])
+        rows.append([("Geri", "m:plan"), ("İptal", "cancel")])
     else:
         rows.append([("Geri", "m:stock"), ("İptal", "cancel")])
     return kb(rows)
 
 
 def teneke_buttons(action: str) -> InlineKeyboardMarkup:
-    fixed = ["Konteyner 1", "Konteyner 2", "Konteyner 3"]
+    fixed = ["Konteyner 1", "Konteyner 2", "Konteyner 3"] + [f"Teneke {i}" for i in range(1, 21)]
     tenekeler = sorted({str(r.get("Teneke_No", "")).strip() for r in records("ph_records") if str(r.get("Teneke_No", "")).strip()}, key=lambda x: int(x) if x.isdigit() else 999999)
     tenekeler = fixed + [t for t in tenekeler if t not in fixed]
     rows: list[list[tuple[str, str]]] = []
@@ -695,6 +728,23 @@ def history_unit(row: dict[str, Any]) -> str:
     return parts[1] if len(parts) >= 2 else ""
 
 
+def parse_material_summary(summary: Any) -> list[dict[str, Any]]:
+    text = str(summary or "").strip()
+    if not text or text in {"-", "Malzeme kullanılmadı"}:
+        return []
+    items = []
+    for part in text.split(";"):
+        bits = part.strip().split()
+        if len(bits) < 3:
+            continue
+        try:
+            amount = parse_decimal(bits[0])
+        except Exception:
+            continue
+        items.append({"amount": amount, "unit": bits[1], "material": " ".join(bits[2:])})
+    return items
+
+
 def operational_records() -> list[dict[str, Any]]:
     rows = []
     for row in records("history"):
@@ -710,6 +760,78 @@ def operational_records() -> list[dict[str, Any]]:
 
 async def show_home(update: Update) -> None:
     await edit_or_send(update, "Yasemin Asistan\n\nBir işlem seç:", main_menu())
+
+
+async def show_status(update: Update) -> None:
+    def ok(value: bool) -> str:
+        return "Hazır" if value else "Eksik"
+
+    counts = {}
+    for name in ["inventory", "history", "Kompost", "ph_records", "reminders", "observations", "plans"]:
+        try:
+            counts[name] = len(records(name))
+        except Exception:
+            counts[name] = "?"
+    waiting_reminders = "?"
+    try:
+        waiting_reminders = sum(1 for r in records("reminders") if str(r.get("Durum", "bekliyor")).casefold() == "bekliyor")
+    except Exception:
+        pass
+    critical_stock = []
+    try:
+        for item in records("inventory"):
+            remaining_raw = str(item.get("Kalan Miktar", "")).strip()
+            if not remaining_raw or remaining_raw.casefold() == "stok bol":
+                continue
+            remaining = parse_decimal(remaining_raw)
+            if remaining <= 0:
+                critical_stock.append(f"- {item.get('Malzeme / Alet', '-')}: bitti")
+            elif remaining <= 5:
+                critical_stock.append(f"- {item.get('Malzeme / Alet', '-')}: {format_decimal(remaining)} {item.get('Birim', '')}")
+    except Exception:
+        critical_stock = []
+    ph_warnings = []
+    try:
+        latest_by_teneke: dict[str, dict[str, Any]] = {}
+        for row in records("ph_records"):
+            teneke = str(row.get("Teneke_No", "")).strip()
+            if teneke:
+                latest_by_teneke[teneke] = row
+        for teneke, row in latest_by_teneke.items():
+            ph_value = parse_decimal(row.get("pH", ""))
+            if ph_value < 5.5 or ph_value > 7.5:
+                ph_warnings.append(f"- {teneke}: pH {format_decimal(ph_value)} ({row.get('Tarih', '-')})")
+    except Exception:
+        ph_warnings = []
+
+    text = (
+        "Bot Durumu\n\n"
+        f"Google Sheets: {ok(bool(SHEET))}\n"
+        f"Agnes AI: {ok(bool(AGNES_API_KEY))} ({AGNES_MODEL})\n"
+        f"Gemini: {ok(bool(GEMINI_API_KEY))} ({GEMINI_MODEL})\n"
+        "Hatırlatma kontrolü: 15 saniyede bir\n\n"
+        "Kayıt Sayıları\n"
+        f"Stok: {counts['inventory']}\n"
+        f"Geçmiş: {counts['history']}\n"
+        f"Kompost: {counts['Kompost']}\n"
+        f"pH: {counts['ph_records']}\n"
+        f"Hatırlatma: {counts['reminders']} (bekleyen: {waiting_reminders})\n"
+        f"Gözlem: {counts['observations']}\n"
+        f"Plan: {counts['plans']}\n"
+    )
+    if critical_stock:
+        text += "\nKritik Stok\n" + "\n".join(critical_stock[:12])
+        if len(critical_stock) > 12:
+            text += f"\n... ve {len(critical_stock) - 12} kayıt daha"
+    else:
+        text += "\nKritik stok görünmüyor."
+    if ph_warnings:
+        text += "\n\npH Dikkat\n" + "\n".join(ph_warnings[:12])
+        if len(ph_warnings) > 12:
+            text += f"\n... ve {len(ph_warnings) - 12} kayıt daha"
+    else:
+        text += "\n\npH dikkat uyarısı yok."
+    await edit_or_send(update, text, main_menu())
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -754,6 +876,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         context.user_data.clear()
         await edit_or_send(update, "Kompost", compost_menu())
         return
+    if data == "m:plan":
+        context.user_data.clear()
+        await edit_or_send(update, "Plan", plan_menu())
+        return
     if data == "m:report":
         context.user_data.clear()
         await edit_or_send(update, "Raporlar", report_menu())
@@ -766,13 +892,34 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         context.user_data.clear()
         await edit_or_send(update, "Gözlem", observation_menu())
         return
+    if data == "m:status":
+        context.user_data.clear()
+        await show_status(update)
+        return
     if data == "m:weather":
         context.user_data.clear()
         await edit_or_send(update, "Hava Durumu", weather_menu())
         return
     if data == "m:ai":
-        context.user_data["flow"] = "ai"
-        await edit_or_send(update, "Agnes AI'ya sormak istediğin şeyi yaz.", back_cancel("m:main"))
+        context.user_data.pop("flow", None)
+        await edit_or_send(update, "Hangi yapay zekaya sormak istersin?", ai_menu())
+        return
+    if data == "ai:agnes":
+        context.user_data["flow"] = "ai_agnes"
+        await edit_or_send(update, "Agnes AI'ya sormak istediğin şeyi yaz.", back_cancel("m:ai"))
+        return
+    if data == "ai:gemini":
+        context.user_data["flow"] = "ai_gemini"
+        await edit_or_send(update, "Gemini'ye sormak istediğin şeyi yaz.", back_cancel("m:ai"))
+        return
+    if data == "ai:both":
+        context.user_data["flow"] = "ai_both"
+        await edit_or_send(update, "Aynı soruyu Agnes ve Gemini'ye soracağım. Sorunu yaz.", back_cancel("m:ai"))
+        return
+    if data == "ai:clear":
+        context.user_data.pop("ai_history", None)
+        context.user_data.pop("gemini_history", None)
+        await edit_or_send(update, "AI konuşma hafızası temizlendi.", ai_menu())
         return
 
     if data == "stock:delete_confirm":
@@ -795,6 +942,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
     if data.startswith("comp:") or data.startswith("compadd:"):
         await handle_compost_callback(update, context, data)
+        return
+    if data.startswith("plan:") or data.startswith("planadd:"):
+        await handle_plan_callback(update, context, data)
         return
     if data.startswith("report:"):
         await handle_report_callback(update, context, data)
@@ -1147,6 +1297,58 @@ async def handle_compost_callback(update: Update, context: ContextTypes.DEFAULT_
         return
 
 
+async def handle_plan_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, data: str) -> None:
+    if data == "plan:add":
+        context.user_data["flow"] = "planadd_date"
+        context.user_data["draft"] = {"items": []}
+        await edit_or_send(update, "Plan tarihi seç:", date_choice_menu("planadd"))
+        return
+    if data == "plan:upcoming":
+        await show_plans(update)
+        return
+    if data == "plan:date":
+        context.user_data["flow"] = "plan_date"
+        await edit_or_send(update, "Plan tarihini yaz. Örn: 14-06-2026 veya 2026-06-14", back_cancel("m:plan"))
+        return
+    if data == "plan:delete":
+        context.user_data["flow"] = "plan_delete"
+        await edit_or_send(update, "Silmek istediğin plan ID numarasını yaz.", back_cancel("m:plan"))
+        return
+    if data == "plan:complete":
+        context.user_data["flow"] = "plan_complete"
+        await edit_or_send(update, "Tamamlanan plan ID numarasını yaz.", back_cancel("m:plan"))
+        return
+    if data.startswith("planadd:date:"):
+        choice = data.rsplit(":", 1)[1]
+        if choice == "custom":
+            context.user_data["flow"] = "planadd_custom_date"
+            await edit_or_send(update, "Özel tarihi yaz. Örn: 14-06-2026", back_cancel("plan:add"))
+            return
+        context.user_data.setdefault("draft", {"items": []})["date"] = today_str() if choice == "today" else (now() - timedelta(days=1)).strftime(DATE_FMT)
+        await edit_or_send(update, "Plan işlem türü seç:", operation_type_menu("planadd"))
+        return
+    if data.startswith("planadd:tur:"):
+        context.user_data.setdefault("draft", {"items": []})["type"] = data.split(":", 2)[2]
+        context.user_data["flow"] = "planadd_target"
+        await edit_or_send(update, "Hedef/alan yaz. Örn: Teneke 4, Sera 1, Kompost Alanı. Yoksa '-' yaz.", back_cancel("m:plan"))
+        return
+    if data == "planadd:more":
+        await edit_or_send(update, "Plan için başka malzeme seç:", inventory_buttons("planadd"))
+        return
+    if data == "planadd:done":
+        await edit_or_send(update, "pH seç:", ph_choice_menu("planadd"))
+        return
+    if data == "planadd:ph_custom":
+        context.user_data["flow"] = "planadd_custom_ph"
+        await edit_or_send(update, "pH değerini yaz. Örn: 6.3", back_cancel("m:plan"))
+        return
+    if data.startswith("planadd:ph:"):
+        context.user_data.setdefault("draft", {})["ph"] = data.split(":", 2)[2]
+        context.user_data["flow"] = "planadd_note"
+        await edit_or_send(update, "Plan notu yaz. Not yoksa '-' yaz.", back_cancel("m:plan"))
+        return
+
+
 async def show_history(update: Update, count: int) -> None:
     rows = records("history")
     if not rows:
@@ -1272,6 +1474,87 @@ async def send_compost_file(update: Update) -> None:
         text += compost_row_text(row) + "\n\n"
     buffer = io.BytesIO(text.encode("utf-8-sig"))
     await message.reply_document(InputFile(buffer, filename=f"kompost_gecmis_{today_str()}.txt"), caption="Kompost geçmiş dosyası hazır.")
+
+
+def plan_row_text(row: dict[str, Any]) -> str:
+    text = f"ID {row_id_text(row)} - {row.get('Tarih', '-')}: {row.get('Islem', '-')}"
+    if row.get("Durum"):
+        text += f" ({row.get('Durum')})"
+    text += "\n"
+    if row.get("Hedef"):
+        text += f"Hedef: {row.get('Hedef')}\n"
+    if row.get("Malzeme_Miktar"):
+        text += f"Malzeme: {row.get('Malzeme_Miktar')}\n"
+    if row.get("pH"):
+        text += f"pH: {row.get('pH')}\n"
+    if row.get("Not"):
+        text += f"Not: {row.get('Not')}\n"
+    return text.rstrip()
+
+
+async def show_plans(update: Update, *, date: str | None = None) -> None:
+    rows = [r for r in records("plans") if str(r.get("Durum", "bekliyor")).strip().casefold() == "bekliyor"]
+    if date:
+        rows = [r for r in rows if parse_date(str(r.get("Tarih", ""))) == date]
+    rows = sorted(rows, key=lambda r: datetime.strptime(parse_date(str(r.get("Tarih", ""))) or "31-12-9999", DATE_FMT))
+    if not rows:
+        await edit_or_send(update, f"{date} için plan yok." if date else "Yaklaşan plan yok.", plan_menu())
+        return
+    title = f"{date} Planları" if date else "Yaklaşan Planlar"
+    text = f"{title}\n\n"
+    for row in rows[:30]:
+        text += plan_row_text(row) + "\n\n"
+    await edit_or_send(update, text[:MSG_LIMIT], plan_menu())
+    if len(text) > MSG_LIMIT and update.effective_message:
+        for part in chunks(text)[1:]:
+            await update.effective_message.reply_text(part)
+
+
+async def complete_plan(update: Update, plan_id: str) -> None:
+    wanted = plan_id.strip()
+    for row in records("plans"):
+        if row_id_text(row) != wanted:
+            continue
+        if str(row.get("Durum", "bekliyor")).strip().casefold() == "tamamlandı":
+            await update.effective_message.reply_text("Bu plan zaten tamamlanmış.", reply_markup=plan_menu())
+            return
+        items = parse_material_summary(row.get("Malzeme_Miktar"))
+        for item in items:
+            ok, error = check_stock_available(item["material"], item["amount"])
+            if not ok:
+                await update.effective_message.reply_text(error, reply_markup=plan_menu())
+                return
+        results = []
+        for item in items:
+            ok, result, _undo = use_stock(
+                item["material"],
+                item["amount"],
+                item["unit"],
+                str(row.get("Islem", "Plan")),
+                f"Plan ID {wanted} tamamlandı. {row.get('Not', '')}".strip(),
+                today_str(),
+                str(row.get("pH", "")),
+                record_history=False,
+            )
+            if not ok:
+                await update.effective_message.reply_text(result, reply_markup=plan_menu())
+                return
+            results.append(f"{format_decimal(item['amount'])} {item['unit']} {item['material']} (Kalan: {result})")
+        add_history(
+            str(row.get("Islem", "Plan")),
+            str(row.get("Malzeme_Miktar", "")),
+            "-",
+            "",
+            str(row.get("pH", "")),
+            f"Plan tamamlandı. Hedef: {row.get('Hedef', '-')}. {row.get('Not', '')}".strip(),
+            today_str(),
+        )
+        set_cell_by_header("plans", int(row["_row"]), "Durum", "tamamlandı")
+        set_cell_by_header("plans", int(row["_row"]), "CompletedAt", now().isoformat(timespec="seconds"))
+        result_text = "\n".join(results) if results else "Stoktan düşülecek malzeme yoktu."
+        await update.effective_message.reply_text(f"Plan tamamlandı ve geçmişe işlendi.\n\n{result_text}", reply_markup=plan_menu())
+        return
+    await update.effective_message.reply_text("Bu plan ID bulunamadı.", reply_markup=plan_menu())
 
 
 def observation_row_text(row: dict[str, Any]) -> str:
@@ -1485,6 +1768,7 @@ async def send_backup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             ("ph_records.csv", "ph_records"),
             ("reminders.csv", "reminders"),
             ("observations.csv", "observations"),
+            ("plans.csv", "plans"),
         ]:
             out = io.StringIO()
             writer = csv.writer(out)
@@ -1563,6 +1847,34 @@ async def ask_ai(question: str, user_id: int, context: ContextTypes.DEFAULT_TYPE
         return answer
     except Exception as exc:
         return f"Agnes AI hatası: {exc}"
+
+
+async def ask_gemini(question: str, context: ContextTypes.DEFAULT_TYPE) -> str:
+    if not GEMINI_API_KEY:
+        return "Gemini API anahtarı eksik. Railway Variables içine GEMINI_API_KEY eklenmeli."
+    history = context.user_data.setdefault("gemini_history", [])
+    parts = [{"text": "Türkçe cevap veren, bahçecilik ve kayıt yönetiminde pratik öneriler sunan bir asistansın. Kısa, net ve uygulanabilir cevap ver."}]
+    for item in history[-8:]:
+        role = "Kullanıcı" if item.get("role") == "user" else "Asistan"
+        parts.append({"text": f"{role}: {item.get('content', '')}"})
+    parts.append({"text": f"Kullanıcı: {question}"})
+    payload = {"contents": [{"parts": parts}]}
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
+    try:
+        response = await asyncio.to_thread(
+            lambda: requests.post(url, params={"key": GEMINI_API_KEY}, json=payload, timeout=45)
+        )
+        response.raise_for_status()
+        data = response.json()
+        response_parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+        answer = "\n".join(str(part.get("text", "")).strip() for part in response_parts if part.get("text")).strip()
+        if not answer:
+            answer = "Gemini cevap döndürmedi."
+        history.extend([{"role": "user", "content": question}, {"role": "assistant", "content": answer}])
+        context.user_data["gemini_history"] = history[-12:]
+        return answer
+    except Exception as exc:
+        return f"Gemini hatası: {exc}"
 
 
 async def analyze_image_with_gemini(image_bytes: bytes, note: str) -> str:
@@ -1662,12 +1974,30 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await cancel(update, context)
         return
 
-    if flow == "ai":
+    if flow == "ai_agnes":
         await update.effective_message.chat.send_action(ChatAction.TYPING)
         answer = await ask_ai(text, update.effective_user.id, context)
         for part in chunks(f"Agnes AI:\n\n{answer}"):
             await update.effective_message.reply_text(part)
-        await update.effective_message.reply_text("Başka bir soru yazabilir veya iptal edebilirsin.", reply_markup=back_cancel("m:main"))
+        await update.effective_message.reply_text("Başka bir soru yazabilir veya geri dönebilirsin.", reply_markup=back_cancel("m:ai"))
+        return
+    if flow == "ai_gemini":
+        await update.effective_message.chat.send_action(ChatAction.TYPING)
+        answer = await ask_gemini(text, context)
+        for part in chunks(f"Gemini:\n\n{answer}"):
+            await update.effective_message.reply_text(part)
+        await update.effective_message.reply_text("Başka bir soru yazabilir veya geri dönebilirsin.", reply_markup=back_cancel("m:ai"))
+        return
+    if flow == "ai_both":
+        await update.effective_message.chat.send_action(ChatAction.TYPING)
+        agnes_answer, gemini_answer = await asyncio.gather(
+            ask_ai(text, update.effective_user.id, context),
+            ask_gemini(text, context),
+        )
+        combined = f"Agnes AI:\n\n{agnes_answer}\n\nGemini:\n\n{gemini_answer}"
+        for part in chunks(combined):
+            await update.effective_message.reply_text(part)
+        await update.effective_message.reply_text("Başka bir soru yazabilir veya geri dönebilirsin.", reply_markup=back_cancel("m:ai"))
         return
 
     if flow == "stock_search":
@@ -2015,6 +2345,87 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         )
         return
 
+    if flow == "planadd_custom_date":
+        date = parse_date(text)
+        if not date:
+            await update.effective_message.reply_text("Tarih anlaşılamadı. Örn: 14-06-2026", reply_markup=back_cancel("plan:add"))
+            return
+        context.user_data["draft"]["date"] = date
+        await update.effective_message.reply_text("Plan işlem türü seç:", reply_markup=operation_type_menu("planadd"))
+        return
+    if flow == "planadd_target":
+        context.user_data.setdefault("draft", {})["target"] = "" if text == "-" else text
+        await update.effective_message.reply_text("Plan için malzeme seç veya malzeme kullanmayacaksan devam et:", reply_markup=inventory_buttons("planadd"))
+        return
+    if flow == "planadd_amount":
+        try:
+            amount = parse_decimal(text)
+        except Exception:
+            await update.effective_message.reply_text("Miktar sayı olmalı.", reply_markup=back_cancel("m:plan"))
+            return
+        d = context.user_data["draft"]
+        item = {
+            "material": d["current_material"],
+            "unit": d.get("current_unit", ""),
+            "amount": amount,
+        }
+        d.setdefault("items", []).append(item)
+        d.pop("current_material", None)
+        d.pop("current_unit", None)
+        summary = "\n".join(f"- {format_decimal(i['amount'])} {i['unit']} {i['material']}" for i in d["items"])
+        await update.effective_message.reply_text(
+            f"Malzeme plana eklendi.\n\nSeçilenler:\n{summary}\n\nBaşka malzeme ekleyebilir veya devam edebilirsin.",
+            reply_markup=planadd_continue_menu(),
+        )
+        return
+    if flow == "planadd_custom_ph":
+        try:
+            ph_value = parse_decimal(text)
+            if not 0 <= ph_value <= 14:
+                raise ValueError
+        except Exception:
+            await update.effective_message.reply_text("pH 0 ile 14 arasında sayı olmalı. Örn: 6.3", reply_markup=back_cancel("m:plan"))
+            return
+        context.user_data.setdefault("draft", {})["ph"] = str(text).replace(",", ".")
+        context.user_data["flow"] = "planadd_note"
+        await update.effective_message.reply_text("Plan notu yaz. Not yoksa '-' yaz.", reply_markup=back_cancel("m:plan"))
+        return
+    if flow == "planadd_note":
+        d = context.user_data["draft"]
+        items = d.get("items", [])
+        material_summary = "; ".join(f"{format_decimal(i['amount'])} {i['unit']} {i['material']}" for i in items) if items else "Malzeme kullanılmadı"
+        item_id = next_id("plans")
+        append_record("plans", PLAN_HEADERS, {
+            "ID": item_id,
+            "Tarih": d["date"],
+            "Islem": d["type"],
+            "Hedef": d.get("target", ""),
+            "Malzeme_Miktar": material_summary,
+            "pH": d.get("ph", ""),
+            "Not": "" if text == "-" else text,
+            "Durum": "bekliyor",
+            "CreatedAt": now().isoformat(timespec="seconds"),
+            "CompletedAt": "",
+        })
+        context.user_data.clear()
+        await update.effective_message.reply_text(f"Plan kaydedildi. ID {item_id}", reply_markup=plan_menu())
+        return
+    if flow == "plan_date":
+        date = parse_date(text)
+        if not date:
+            await update.effective_message.reply_text("Tarih anlaşılamadı. Örn: 14-06-2026", reply_markup=back_cancel("m:plan"))
+            return
+        await show_plans(update, date=date)
+        return
+    if flow == "plan_delete":
+        await delete_by_id(update, "plans", text, "Plan silindi.", plan_menu())
+        context.user_data.clear()
+        return
+    if flow == "plan_complete":
+        await complete_plan(update, text)
+        context.user_data.clear()
+        return
+
     if flow == "report_month":
         parsed = parse_month(text)
         if not parsed:
@@ -2219,6 +2630,15 @@ async def compadd_inventory_callback(update: Update, context: ContextTypes.DEFAU
     await edit_or_send(update, f"Malzeme: {item.get('Malzeme / Alet')}\nMiktar yaz:", back_cancel("m:compost"))
 
 
+async def planadd_inventory_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, item: dict[str, Any]) -> None:
+    draft = context.user_data.setdefault("draft", {"items": []})
+    draft.setdefault("items", [])
+    draft["current_material"] = item.get("Malzeme / Alet")
+    draft["current_unit"] = item.get("Birim", "")
+    context.user_data["flow"] = "planadd_amount"
+    await edit_or_send(update, f"Malzeme: {item.get('Malzeme / Alet')}\nPlanlanan miktarı yaz:", back_cancel("m:plan"))
+
+
 async def reportstock_inventory_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, item: dict[str, Any]) -> None:
     await show_stock_report(update, str(item.get("Malzeme / Alet", "")))
 
@@ -2241,6 +2661,9 @@ async def handle_inventory_callback(update: Update, context: ContextTypes.DEFAUL
         return
     if action == "compadd":
         await compadd_inventory_callback(update, context, item)
+        return
+    if action == "planadd":
+        await planadd_inventory_callback(update, context, item)
         return
     if action == "reportstock":
         await reportstock_inventory_callback(update, context, item)
