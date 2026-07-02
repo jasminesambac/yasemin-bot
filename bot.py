@@ -49,6 +49,8 @@ PH_HEADERS = ["ID", "Tarih", "Teneke_No", "pH", "Not", "CreatedAt"]
 REMINDER_HEADERS = ["ID", "Tarih", "Saat", "Metin", "Durum", "Chat_ID", "Tekrar", "Hafta_Gunu", "Ay_Gunu", "CreatedAt"]
 OBSERVATION_HEADERS = ["ID", "Tarih", "Kategori", "Not", "Foto_File_ID", "AI_Yorum", "CreatedAt"]
 PLAN_HEADERS = ["ID", "Tarih", "Islem", "Hedef", "Malzeme_Miktar", "pH", "Not", "Durum", "CreatedAt", "CompletedAt"]
+AREA_HEADERS = ["ID", "Alan", "Not", "Durum", "CreatedAt"]
+RECIPE_HEADERS = ["ID", "Ad", "Islem", "Malzeme_Miktar", "pH", "Not", "Durum", "CreatedAt"]
 
 SHEET: dict[str, gspread.Worksheet] = {}
 AI_CLIENT = None
@@ -221,7 +223,7 @@ def kb(rows: list[list[tuple[str, str]]]) -> InlineKeyboardMarkup:
 
 
 def back_cancel(back_to: str) -> InlineKeyboardMarkup:
-    return kb([[("Geri", back_to), ("İptal", "cancel")]])
+    return kb([[("Geri", back_to), ("İptal", "cancel"), ("Ana Menü", "m:main")]])
 
 
 def main_menu() -> InlineKeyboardMarkup:
@@ -230,6 +232,7 @@ def main_menu() -> InlineKeyboardMarkup:
         [("📜 Geçmiş", "m:history"), ("📊 Rapor", "m:report")],
         [("⏰ Hatırlatma", "m:reminder"), ("🌤️ Hava", "m:weather")],
         [("🪱 Kompost", "m:compost"), ("🗓️ Plan", "m:plan")],
+        [("🌱 Alanlar", "m:areas"), ("🧪 Reçeteler", "m:recipes")],
         [("📸 Gözlem", "m:observation"), ("🤖 AI Sor", "m:ai")],
         [("💾 Yedekle", "backup"), ("🧭 Durum", "m:status")],
     ])
@@ -275,6 +278,22 @@ def plan_menu() -> InlineKeyboardMarkup:
         [("➕ Plan Ekle", "plan:add"), ("📋 Yaklaşan Planlar", "plan:upcoming")],
         [("📅 Tarihli Planlar", "plan:date"), ("✅ Planı Tamamla", "plan:complete")],
         [("❌ Plan Sil", "plan:delete")],
+        [("🔙 Geri", "m:main")],
+    ])
+
+
+def area_menu() -> InlineKeyboardMarkup:
+    return kb([
+        [("📋 Alan Listesi", "area:list"), ("➕ Alan Ekle", "area:add")],
+        [("❌ Alan Sil", "area:delete")],
+        [("🔙 Geri", "m:main")],
+    ])
+
+
+def recipe_menu() -> InlineKeyboardMarkup:
+    return kb([
+        [("📋 Reçete Listesi", "recipe:list"), ("➕ Reçete Ekle", "recipe:add")],
+        [("▶️ Reçete Uygula", "recipe:apply"), ("❌ Reçete Sil", "recipe:delete")],
         [("🔙 Geri", "m:main")],
     ])
 
@@ -325,26 +344,26 @@ def category_menu() -> InlineKeyboardMarkup:
         [("Katı", "cat:Katı"), ("Sıvı", "cat:Sıvı")],
         [("Alet", "cat:Alet"), ("Mekanik", "cat:Mekanik")],
         [("Cihaz", "cat:Cihaz")],
-        [("Geri", "m:stock"), ("İptal", "cancel")],
+        [("Geri", "m:stock"), ("İptal", "cancel"), ("Ana Menü", "m:main")],
     ])
 
 
 def unit_menu(back_to: str = "stock:add") -> InlineKeyboardMarkup:
     return kb([
         [("gr", "unit:gr"), ("ml", "unit:ml"), ("L", "unit:L"), ("adet", "unit:adet")],
-        [("Geri", back_to), ("İptal", "cancel")],
+        [("Geri", back_to), ("İptal", "cancel"), ("Ana Menü", "m:main")],
     ])
 
 
 def operation_type_menu(prefix: str) -> InlineKeyboardMarkup:
-    back_to = "m:stock" if prefix == "use" else "m:plan" if prefix == "planadd" else "m:history"
+    back_to = "m:stock" if prefix == "use" else "m:plan" if prefix == "planadd" else "m:recipes" if prefix == "recipeadd" else "m:history"
     return kb([
         [("Sulama", f"{prefix}:tur:Sulama"), ("Gübreleme", f"{prefix}:tur:Gübreleme")],
         [("İlaçlama", f"{prefix}:tur:İlaçlama"), ("Hasat", f"{prefix}:tur:Hasat")],
         [("Toprak İşlemi", f"{prefix}:tur:Toprak İşlemi"), ("Çelik Alma", f"{prefix}:tur:Çelik Alma")],
         [("Çelik Kontrol", f"{prefix}:tur:Çelik Kontrol"), ("Sisleme", f"{prefix}:tur:Sisleme")],
         [("Diğer", f"{prefix}:tur:Diğer")],
-        [("Geri", back_to), ("İptal", "cancel")],
+        [("Geri", back_to), ("İptal", "cancel"), ("Ana Menü", "m:main")],
     ])
 
 
@@ -357,14 +376,14 @@ def date_choice_menu(prefix: str) -> InlineKeyboardMarkup:
         rows.append([("Her Gün", "rem:date:daily"), ("Haftalık", "rem:date:weekly")])
         rows.append([("Aylık", "rem:date:monthly")])
     back_to = "m:history" if prefix == "histadd" else "m:compost" if prefix == "compadd" else "m:plan" if prefix == "planadd" else "m:reminder"
-    rows.append([("Geri", back_to), ("İptal", "cancel")])
+    rows.append([("Geri", back_to), ("İptal", "cancel"), ("Ana Menü", "m:main")])
     return kb(rows)
 
 
 def weekday_menu() -> InlineKeyboardMarkup:
     days = ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"]
     rows = [[(day, f"rem:weekday:{i}")] for i, day in enumerate(days)]
-    rows.append([("Geri", "rem:add"), ("İptal", "cancel")])
+    rows.append([("Geri", "rem:add"), ("İptal", "cancel"), ("Ana Menü", "m:main")])
     return kb(rows)
 
 
@@ -372,7 +391,7 @@ def monthday_menu() -> InlineKeyboardMarkup:
     rows: list[list[tuple[str, str]]] = []
     for start in range(1, 32, 5):
         rows.append([(str(day), f"rem:monthday:{day}") for day in range(start, min(start + 5, 32))])
-    rows.append([("Geri", "rem:add"), ("İptal", "cancel")])
+    rows.append([("Geri", "rem:add"), ("İptal", "cancel"), ("Ana Menü", "m:main")])
     return kb(rows)
 
 
@@ -397,7 +416,7 @@ def reminder_calendar_menu(year: int | None = None, month: int | None = None) ->
     next_month = 1 if month == 12 else month + 1
     rows.append([("Önceki Ay", f"rem:cal:{prev_year}:{prev_month}"), ("Sonraki Ay", f"rem:cal:{next_year}:{next_month}")])
     rows.append([("Tarih Yaz", "rem:date:custom_text")])
-    rows.append([("Geri", "rem:add"), ("İptal", "cancel")])
+    rows.append([("Geri", "rem:add"), ("İptal", "cancel"), ("Ana Menü", "m:main")])
     return kb(rows)
 
 
@@ -405,17 +424,17 @@ def time_choice_menu() -> InlineKeyboardMarkup:
     return kb([
         [("09:00", "rem:time:09:00"), ("12:00", "rem:time:12:00"), ("15:00", "rem:time:15:00")],
         [("17:00", "rem:time:17:00"), ("20:00", "rem:time:20:00"), ("Özel", "rem:time:custom")],
-        [("Geri", "rem:add"), ("İptal", "cancel")],
+        [("Geri", "rem:add"), ("İptal", "cancel"), ("Ana Menü", "m:main")],
     ])
 
 
 def ph_choice_menu(prefix: str = "histadd") -> InlineKeyboardMarkup:
-    back_to = "m:compost" if prefix == "compadd" else "m:plan" if prefix == "planadd" else "m:history"
+    back_to = "m:compost" if prefix == "compadd" else "m:plan" if prefix == "planadd" else "m:recipes" if prefix == "recipeadd" else "m:history"
     return kb([
         [("5.0", f"{prefix}:ph:5.0"), ("5.5", f"{prefix}:ph:5.5"), ("6.0", f"{prefix}:ph:6.0")],
         [("6.5", f"{prefix}:ph:6.5"), ("7.0", f"{prefix}:ph:7.0"), ("Özel pH", f"{prefix}:ph_custom")],
         [("Ölçmedim", f"{prefix}:ph:")],
-        [("Geri", back_to), ("İptal", "cancel")],
+        [("Geri", back_to), ("İptal", "cancel"), ("Ana Menü", "m:main")],
     ])
 
 
@@ -426,7 +445,7 @@ def compost_type_menu() -> InlineKeyboardMarkup:
         [("Kompost Sulama", "compadd:tur:Kompost Sulama")],
         [("Kompost Kontrolü", "compadd:tur:Kompost Kontrolü")],
         [("Diğer", "compadd:tur:Diğer")],
-        [("Geri", "m:compost"), ("İptal", "cancel")],
+        [("Geri", "m:compost"), ("İptal", "cancel"), ("Ana Menü", "m:main")],
     ])
 
 
@@ -437,7 +456,7 @@ def compost_container_menu(selected: list[str] | None = None) -> InlineKeyboardM
         label = f"✓ {container}" if container in selected else container
         rows.append([(label, f"compadd:container:{container}")])
     rows.append([("Devam Et", "compadd:containers_done")])
-    rows.append([("Geri", "m:compost"), ("İptal", "cancel")])
+    rows.append([("Geri", "m:compost"), ("İptal", "cancel"), ("Ana Menü", "m:main")])
     return kb(rows)
 
 
@@ -445,7 +464,7 @@ def histadd_continue_menu() -> InlineKeyboardMarkup:
     return kb([
         [("Başka Malzeme Ekle", "histadd:more")],
         [("Devam Et", "histadd:done")],
-        [("Geri", "m:history"), ("İptal", "cancel")],
+        [("Geri", "m:history"), ("İptal", "cancel"), ("Ana Menü", "m:main")],
     ])
 
 
@@ -453,8 +472,27 @@ def planadd_continue_menu() -> InlineKeyboardMarkup:
     return kb([
         [("Başka Malzeme Ekle", "planadd:more")],
         [("Devam Et", "planadd:done")],
-        [("Geri", "m:plan"), ("İptal", "cancel")],
+        [("Geri", "m:plan"), ("İptal", "cancel"), ("Ana Menü", "m:main")],
     ])
+
+
+def recipeadd_continue_menu() -> InlineKeyboardMarkup:
+    return kb([
+        [("Başka Malzeme Ekle", "recipeadd:more")],
+        [("Devam Et", "recipeadd:done")],
+        [("Geri", "m:recipes"), ("İptal", "cancel"), ("Ana Menü", "m:main")],
+    ])
+
+
+def area_buttons(action: str, back_to: str = "m:areas") -> InlineKeyboardMarkup:
+    rows: list[list[tuple[str, str]]] = []
+    active = [r for r in records("areas") if str(r.get("Durum", "aktif")).strip().casefold() != "pasif"]
+    for area in active[:30]:
+        name = str(area.get("Alan", "Adsız"))[:35]
+        rows.append([(name, f"area_select:{action}:{area['_row']}")])
+    rows.append([("Alan Yaz", f"area_select:{action}:custom")])
+    rows.append([("Geri", back_to), ("İptal", "cancel"), ("Ana Menü", "m:main")])
+    return kb(rows)
 
 
 def city_menu(prefix: str) -> InlineKeyboardMarkup:
@@ -463,7 +501,7 @@ def city_menu(prefix: str) -> InlineKeyboardMarkup:
     for i in range(0, len(cities), 2):
         rows.append([(cities[i], f"{prefix}:city:{cities[i]}"), (cities[i + 1], f"{prefix}:city:{cities[i + 1]}")])
     rows.append([("Şehir Yaz", f"{prefix}:city:custom")])
-    rows.append([("Geri", "m:weather"), ("İptal", "cancel")])
+    rows.append([("Geri", "m:weather"), ("İptal", "cancel"), ("Ana Menü", "m:main")])
     return kb(rows)
 
 
@@ -482,6 +520,8 @@ def init_sheets() -> None:
         "reminders": REMINDER_HEADERS,
         "observations": OBSERVATION_HEADERS,
         "plans": PLAN_HEADERS,
+        "areas": AREA_HEADERS,
+        "recipes": RECIPE_HEADERS,
     }
 
     try:
@@ -671,12 +711,14 @@ def inventory_buttons(action: str, page: int = 0) -> InlineKeyboardMarkup:
         rows.append(nav)
     if action == "compadd":
         rows.append([("Malzeme Kullanmadım / Devam Et", "compadd:done")])
-        rows.append([("Geri", "m:compost"), ("İptal", "cancel")])
+        rows.append([("Geri", "m:compost"), ("İptal", "cancel"), ("Ana Menü", "m:main")])
     elif action == "planadd":
         rows.append([("Malzeme Kullanmayacağım / Devam Et", "planadd:done")])
-        rows.append([("Geri", "m:plan"), ("İptal", "cancel")])
+        rows.append([("Geri", "m:plan"), ("İptal", "cancel"), ("Ana Menü", "m:main")])
+    elif action == "recipeadd":
+        rows.append([("Geri", "m:recipes"), ("İptal", "cancel"), ("Ana Menü", "m:main")])
     else:
-        rows.append([("Geri", "m:stock"), ("İptal", "cancel")])
+        rows.append([("Geri", "m:stock"), ("İptal", "cancel"), ("Ana Menü", "m:main")])
     return kb(rows)
 
 
@@ -694,7 +736,7 @@ def teneke_buttons(action: str) -> InlineKeyboardMarkup:
     if line:
         rows.append(line)
     rows.append([("Teneke Yaz", f"teneke:{action}:custom")])
-    rows.append([("Geri", "m:ph"), ("İptal", "cancel")])
+    rows.append([("Geri", "m:ph"), ("İptal", "cancel"), ("Ana Menü", "m:main")])
     return kb(rows)
 
 
@@ -767,7 +809,7 @@ async def show_status(update: Update) -> None:
         return "Hazır" if value else "Eksik"
 
     counts = {}
-    for name in ["inventory", "history", "Kompost", "ph_records", "reminders", "observations", "plans"]:
+    for name in ["inventory", "history", "Kompost", "ph_records", "reminders", "observations", "plans", "areas", "recipes"]:
         try:
             counts[name] = len(records(name))
         except Exception:
@@ -818,6 +860,8 @@ async def show_status(update: Update) -> None:
         f"Hatırlatma: {counts['reminders']} (bekleyen: {waiting_reminders})\n"
         f"Gözlem: {counts['observations']}\n"
         f"Plan: {counts['plans']}\n"
+        f"Alan: {counts['areas']}\n"
+        f"Reçete: {counts['recipes']}\n"
     )
     if critical_stock:
         text += "\nKritik Stok\n" + "\n".join(critical_stock[:12])
@@ -879,6 +923,14 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if data == "m:plan":
         context.user_data.clear()
         await edit_or_send(update, "Plan", plan_menu())
+        return
+    if data == "m:areas":
+        context.user_data.clear()
+        await edit_or_send(update, "Alanlar", area_menu())
+        return
+    if data == "m:recipes":
+        context.user_data.clear()
+        await edit_or_send(update, "Reçeteler", recipe_menu())
         return
     if data == "m:report":
         context.user_data.clear()
@@ -945,6 +997,12 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
     if data.startswith("plan:") or data.startswith("planadd:"):
         await handle_plan_callback(update, context, data)
+        return
+    if data.startswith("area:") or data.startswith("area_select:"):
+        await handle_area_callback(update, context, data)
+        return
+    if data.startswith("recipe:") or data.startswith("recipeadd:"):
+        await handle_recipe_callback(update, context, data)
         return
     if data.startswith("report:"):
         await handle_report_callback(update, context, data)
@@ -1107,7 +1165,7 @@ async def handle_ph_callback(update: Update, context: ContextTypes.DEFAULT_TYPE,
         await edit_or_send(update, "pH kaydı nasıl silinsin?", kb([
             [("ID ile sil", "ph:delete_id")],
             [("Teneke seçip son kaydı sil", "ph:delete_last")],
-            [("Geri", "m:ph"), ("İptal", "cancel")],
+            [("Geri", "m:ph"), ("İptal", "cancel"), ("Ana Menü", "m:main")],
         ]))
         return
     if data == "ph:delete_id":
@@ -1329,8 +1387,7 @@ async def handle_plan_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         return
     if data.startswith("planadd:tur:"):
         context.user_data.setdefault("draft", {"items": []})["type"] = data.split(":", 2)[2]
-        context.user_data["flow"] = "planadd_target"
-        await edit_or_send(update, "Hedef/alan yaz. Örn: Teneke 4, Sera 1, Kompost Alanı. Yoksa '-' yaz.", back_cancel("m:plan"))
+        await edit_or_send(update, "Hedef/alan seç veya yaz:", area_buttons("planadd", "m:plan"))
         return
     if data == "planadd:more":
         await edit_or_send(update, "Plan için başka malzeme seç:", inventory_buttons("planadd"))
@@ -1347,6 +1404,85 @@ async def handle_plan_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         context.user_data["flow"] = "planadd_note"
         await edit_or_send(update, "Plan notu yaz. Not yoksa '-' yaz.", back_cancel("m:plan"))
         return
+
+
+async def handle_area_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, data: str) -> None:
+    if data == "area:list":
+        rows = [r for r in records("areas") if str(r.get("Durum", "aktif")).strip().casefold() != "pasif"]
+        if not rows:
+            await edit_or_send(update, "Kayıtlı alan yok.", area_menu())
+            return
+        text = "Alan Listesi\n\n"
+        for row in rows:
+            text += f"ID {row_id_text(row)} - {row.get('Alan', '-')}"
+            if row.get("Not"):
+                text += f"\nNot: {row.get('Not')}"
+            text += "\n\n"
+        await edit_or_send(update, text[:MSG_LIMIT], area_menu())
+        return
+    if data == "area:add":
+        context.user_data["flow"] = "area_add_name"
+        context.user_data["draft"] = {}
+        await edit_or_send(update, "Alan adını yaz. Örn: Sera 1, Çelik Alanı, Kompost Alanı", back_cancel("m:areas"))
+        return
+    if data == "area:delete":
+        context.user_data["flow"] = "area_delete"
+        await edit_or_send(update, "Silmek istediğin alan ID numarasını yaz.", back_cancel("m:areas"))
+        return
+    if data.startswith("area_select:"):
+        _, action, row_s = data.split(":", 2)
+        if action == "planadd":
+            if row_s == "custom":
+                context.user_data["flow"] = "planadd_target"
+                await edit_or_send(update, "Hedef/alan yaz. Örn: Teneke 4, Sera 1, Kompost Alanı. Yoksa '-' yaz.", back_cancel("m:plan"))
+                return
+            area = next((r for r in records("areas") if str(r.get("_row")) == row_s), None)
+            if not area:
+                await edit_or_send(update, "Alan bulunamadı.", area_buttons("planadd", "m:plan"))
+                return
+            context.user_data.setdefault("draft", {})["target"] = area.get("Alan", "")
+            await edit_or_send(update, "Plan için malzeme seç veya malzeme kullanmayacaksan devam et:", inventory_buttons("planadd"))
+
+
+async def handle_recipe_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, data: str) -> None:
+    if data == "recipe:list":
+        await show_recipes(update)
+        return
+    if data == "recipe:add":
+        context.user_data["flow"] = "recipeadd_name"
+        context.user_data["draft"] = {"items": []}
+        await edit_or_send(update, "Reçete adını yaz. Örn: Çelik Sisleme Karışımı", back_cancel("m:recipes"))
+        return
+    if data == "recipe:apply":
+        context.user_data["flow"] = "recipe_apply"
+        await edit_or_send(update, "Uygulamak istediğin reçete ID numarasını yaz.", back_cancel("m:recipes"))
+        return
+    if data == "recipe:delete":
+        context.user_data["flow"] = "recipe_delete"
+        await edit_or_send(update, "Silmek istediğin reçete ID numarasını yaz.", back_cancel("m:recipes"))
+        return
+    if data.startswith("recipeadd:tur:"):
+        context.user_data.setdefault("draft", {"items": []})["type"] = data.split(":", 2)[2]
+        await edit_or_send(update, "Reçete malzemelerini seç:", inventory_buttons("recipeadd"))
+        return
+    if data == "recipeadd:more":
+        await edit_or_send(update, "Reçete için başka malzeme seç:", inventory_buttons("recipeadd"))
+        return
+    if data == "recipeadd:done":
+        items = context.user_data.get("draft", {}).get("items", [])
+        if not items:
+            await edit_or_send(update, "Reçete için en az bir malzeme eklemelisin.", inventory_buttons("recipeadd"))
+            return
+        await edit_or_send(update, "Reçete pH değeri seç:", ph_choice_menu("recipeadd"))
+        return
+    if data == "recipeadd:ph_custom":
+        context.user_data["flow"] = "recipeadd_custom_ph"
+        await edit_or_send(update, "pH değerini yaz. Örn: 6.3", back_cancel("m:recipes"))
+        return
+    if data.startswith("recipeadd:ph:"):
+        context.user_data.setdefault("draft", {})["ph"] = data.split(":", 2)[2]
+        context.user_data["flow"] = "recipeadd_note"
+        await edit_or_send(update, "Reçete notu yaz. Not yoksa '-' yaz.", back_cancel("m:recipes"))
 
 
 async def show_history(update: Update, count: int) -> None:
@@ -1569,6 +1705,74 @@ def observation_row_text(row: dict[str, Any]) -> str:
     return text.rstrip()
 
 
+def recipe_row_text(row: dict[str, Any]) -> str:
+    text = f"ID {row_id_text(row)} - {row.get('Ad', '-')}: {row.get('Islem', '-')}\n"
+    text += f"Malzemeler: {row.get('Malzeme_Miktar', '-')}"
+    if row.get("pH"):
+        text += f"\npH: {row.get('pH')}"
+    if row.get("Not"):
+        text += f"\nNot: {row.get('Not')}"
+    return text
+
+
+async def show_recipes(update: Update) -> None:
+    rows = [r for r in records("recipes") if str(r.get("Durum", "aktif")).strip().casefold() != "pasif"]
+    if not rows:
+        await edit_or_send(update, "Kayıtlı reçete yok.", recipe_menu())
+        return
+    text = "Reçete Listesi\n\n"
+    for row in rows:
+        text += recipe_row_text(row) + "\n\n"
+    await edit_or_send(update, text[:MSG_LIMIT], recipe_menu())
+    if len(text) > MSG_LIMIT and update.effective_message:
+        for part in chunks(text)[1:]:
+            await update.effective_message.reply_text(part)
+
+
+async def apply_recipe(update: Update, recipe_id: str) -> None:
+    wanted = recipe_id.strip()
+    for row in records("recipes"):
+        if row_id_text(row) != wanted:
+            continue
+        items = parse_material_summary(row.get("Malzeme_Miktar"))
+        if not items:
+            await update.effective_message.reply_text("Bu reçetede uygulanacak malzeme yok.", reply_markup=recipe_menu())
+            return
+        for item in items:
+            ok, error = check_stock_available(item["material"], item["amount"])
+            if not ok:
+                await update.effective_message.reply_text(error, reply_markup=recipe_menu())
+                return
+        results = []
+        for item in items:
+            ok, result, _undo = use_stock(
+                item["material"],
+                item["amount"],
+                item["unit"],
+                str(row.get("Islem", "Reçete")),
+                f"Reçete uygulandı: {row.get('Ad', '-')}. {row.get('Not', '')}".strip(),
+                today_str(),
+                str(row.get("pH", "")),
+                record_history=False,
+            )
+            if not ok:
+                await update.effective_message.reply_text(result, reply_markup=recipe_menu())
+                return
+            results.append(f"{format_decimal(item['amount'])} {item['unit']} {item['material']} (Kalan: {result})")
+        add_history(
+            str(row.get("Islem", "Reçete")),
+            str(row.get("Malzeme_Miktar", "")),
+            "-",
+            "",
+            str(row.get("pH", "")),
+            f"Reçete uygulandı: {row.get('Ad', '-')}. {row.get('Not', '')}".strip(),
+            today_str(),
+        )
+        await update.effective_message.reply_text("Reçete uygulandı ve geçmişe işlendi.\n\n" + "\n".join(results), reply_markup=recipe_menu())
+        return
+    await update.effective_message.reply_text("Bu reçete ID bulunamadı.", reply_markup=recipe_menu())
+
+
 async def show_observation_page(update: Update, page: int = 0, page_size: int = 6) -> None:
     rows = records("observations")
     if not rows:
@@ -1769,6 +1973,8 @@ async def send_backup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             ("reminders.csv", "reminders"),
             ("observations.csv", "observations"),
             ("plans.csv", "plans"),
+            ("areas.csv", "areas"),
+            ("recipes.csv", "recipes"),
         ]:
             out = io.StringIO()
             writer = csv.writer(out)
@@ -2265,7 +2471,7 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             reply_markup=kb([
                 [("Başka Malzeme Ekle", "compadd:more")],
                 [("Devam Et", "compadd:done")],
-                [("Geri", "m:compost"), ("İptal", "cancel")],
+                [("Geri", "m:compost"), ("İptal", "cancel"), ("Ana Menü", "m:main")],
             ]),
         )
         return
@@ -2423,6 +2629,104 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
     if flow == "plan_complete":
         await complete_plan(update, text)
+        context.user_data.clear()
+        return
+
+    if flow == "area_add_name":
+        name = text.strip()
+        if not name:
+            await update.effective_message.reply_text("Alan adı boş olamaz.", reply_markup=back_cancel("m:areas"))
+            return
+        for row in records("areas"):
+            if normalize_name(row.get("Alan")) == normalize_name(name):
+                await update.effective_message.reply_text("Bu alan zaten kayıtlı. Başka bir ad yaz.", reply_markup=back_cancel("m:areas"))
+                return
+        context.user_data["draft"] = {"name": name}
+        context.user_data["flow"] = "area_add_note"
+        await update.effective_message.reply_text("Alan notu yaz. Not yoksa '-' yaz.", reply_markup=back_cancel("m:areas"))
+        return
+    if flow == "area_add_note":
+        d = context.user_data["draft"]
+        item_id = next_id("areas")
+        append_record("areas", AREA_HEADERS, {
+            "ID": item_id,
+            "Alan": d["name"],
+            "Not": "" if text == "-" else text,
+            "Durum": "aktif",
+            "CreatedAt": now().isoformat(timespec="seconds"),
+        })
+        context.user_data.clear()
+        await update.effective_message.reply_text(f"Alan eklendi. ID {item_id} - {d['name']}", reply_markup=area_menu())
+        return
+    if flow == "area_delete":
+        await delete_by_id(update, "areas", text, "Alan silindi.", area_menu())
+        context.user_data.clear()
+        return
+
+    if flow == "recipeadd_name":
+        name = text.strip()
+        if not name:
+            await update.effective_message.reply_text("Reçete adı boş olamaz.", reply_markup=back_cancel("m:recipes"))
+            return
+        context.user_data.setdefault("draft", {"items": []})["name"] = name
+        await update.effective_message.reply_text("Reçetenin işlem türünü seç:", reply_markup=operation_type_menu("recipeadd"))
+        return
+    if flow == "recipeadd_amount":
+        try:
+            amount = parse_decimal(text)
+        except Exception:
+            await update.effective_message.reply_text("Miktar sayı olmalı.", reply_markup=back_cancel("m:recipes"))
+            return
+        d = context.user_data["draft"]
+        d.setdefault("items", []).append({
+            "material": d["current_material"],
+            "unit": d.get("current_unit", ""),
+            "amount": amount,
+        })
+        d.pop("current_material", None)
+        d.pop("current_unit", None)
+        summary = "\n".join(f"- {format_decimal(i['amount'])} {i['unit']} {i['material']}" for i in d["items"])
+        await update.effective_message.reply_text(
+            f"Malzeme reçeteye eklendi.\n\n{summary}\n\nBaşka malzeme ekleyebilir veya devam edebilirsin.",
+            reply_markup=recipeadd_continue_menu(),
+        )
+        return
+    if flow == "recipeadd_custom_ph":
+        try:
+            ph_value = parse_decimal(text)
+            if not 0 <= ph_value <= 14:
+                raise ValueError
+        except Exception:
+            await update.effective_message.reply_text("pH 0 ile 14 arasında sayı olmalı. Örn: 6.3", reply_markup=back_cancel("m:recipes"))
+            return
+        context.user_data.setdefault("draft", {})["ph"] = str(text).replace(",", ".")
+        context.user_data["flow"] = "recipeadd_note"
+        await update.effective_message.reply_text("Reçete notu yaz. Not yoksa '-' yaz.", reply_markup=back_cancel("m:recipes"))
+        return
+    if flow == "recipeadd_note":
+        d = context.user_data["draft"]
+        items = d.get("items", [])
+        material_summary = "; ".join(f"{format_decimal(i['amount'])} {i['unit']} {i['material']}" for i in items)
+        item_id = next_id("recipes")
+        append_record("recipes", RECIPE_HEADERS, {
+            "ID": item_id,
+            "Ad": d["name"],
+            "Islem": d.get("type", "Reçete"),
+            "Malzeme_Miktar": material_summary,
+            "pH": d.get("ph", ""),
+            "Not": "" if text == "-" else text,
+            "Durum": "aktif",
+            "CreatedAt": now().isoformat(timespec="seconds"),
+        })
+        context.user_data.clear()
+        await update.effective_message.reply_text(f"Reçete kaydedildi. ID {item_id}", reply_markup=recipe_menu())
+        return
+    if flow == "recipe_apply":
+        await apply_recipe(update, text)
+        context.user_data.clear()
+        return
+    if flow == "recipe_delete":
+        await delete_by_id(update, "recipes", text, "Reçete silindi.", recipe_menu())
         context.user_data.clear()
         return
 
@@ -2639,6 +2943,15 @@ async def planadd_inventory_callback(update: Update, context: ContextTypes.DEFAU
     await edit_or_send(update, f"Malzeme: {item.get('Malzeme / Alet')}\nPlanlanan miktarı yaz:", back_cancel("m:plan"))
 
 
+async def recipeadd_inventory_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, item: dict[str, Any]) -> None:
+    draft = context.user_data.setdefault("draft", {"items": []})
+    draft.setdefault("items", [])
+    draft["current_material"] = item.get("Malzeme / Alet")
+    draft["current_unit"] = item.get("Birim", "")
+    context.user_data["flow"] = "recipeadd_amount"
+    await edit_or_send(update, f"Malzeme: {item.get('Malzeme / Alet')}\nReçetedeki miktarı yaz:", back_cancel("m:recipes"))
+
+
 async def reportstock_inventory_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, item: dict[str, Any]) -> None:
     await show_stock_report(update, str(item.get("Malzeme / Alet", "")))
 
@@ -2664,6 +2977,9 @@ async def handle_inventory_callback(update: Update, context: ContextTypes.DEFAUL
         return
     if action == "planadd":
         await planadd_inventory_callback(update, context, item)
+        return
+    if action == "recipeadd":
+        await recipeadd_inventory_callback(update, context, item)
         return
     if action == "reportstock":
         await reportstock_inventory_callback(update, context, item)
