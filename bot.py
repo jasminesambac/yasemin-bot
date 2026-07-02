@@ -363,6 +363,7 @@ def diary_menu() -> InlineKeyboardMarkup:
     return kb([
         [("➕ Günlük Not Ekle", "diary:add"), ("📋 Son Günlükler", "diary:list")],
         [("📅 Tarihli Günlük", "diary:date"), ("🤖 AI Gün Özeti", "diary:ai")],
+        [("❌ Günlük Sil", "diary:delete")],
         [("🔙 Geri", "m:main")],
     ])
 
@@ -807,13 +808,15 @@ def inventory_buttons(action: str, page: int = 0) -> InlineKeyboardMarkup:
         rows.append([("Geri", "m:plan"), ("İptal", "cancel"), ("Ana Menü", "m:main")])
     elif action == "recipeadd":
         rows.append([("Geri", "m:recipes"), ("İptal", "cancel"), ("Ana Menü", "m:main")])
+    elif action == "essoil":
+        rows.append([("Geri", "m:essence"), ("İptal", "cancel"), ("Ana Menü", "m:main")])
     else:
         rows.append([("Geri", "m:stock"), ("İptal", "cancel"), ("Ana Menü", "m:main")])
     return kb(rows)
 
 
 def teneke_buttons(action: str) -> InlineKeyboardMarkup:
-    fixed = ["Konteyner 1", "Konteyner 2", "Konteyner 3"] + [f"Teneke {i}" for i in range(1, 21)]
+    fixed = ["Konteyner 1", "Konteyner 2", "Konteyner 3"] + [str(i) for i in range(1, 21)]
     tenekeler = sorted({str(r.get("Teneke_No", "")).strip() for r in records("ph_records") if str(r.get("Teneke_No", "")).strip()}, key=lambda x: int(x) if x.isdigit() else 999999)
     tenekeler = fixed + [t for t in tenekeler if t not in fixed]
     rows: list[list[tuple[str, str]]] = []
@@ -1708,6 +1711,10 @@ async def handle_diary_callback(update: Update, context: ContextTypes.DEFAULT_TY
         context.user_data["flow"] = "diary_ai_date"
         await edit_or_send(update, "Özetlenecek tarihi yaz. Örn: bugün veya 14-06-2026", back_cancel("m:diary"))
         return
+    if data == "diary:delete":
+        context.user_data["flow"] = "diary_delete"
+        await edit_or_send(update, "Silmek istediğin günlük ID numarasını yaz.", back_cancel("m:diary"))
+        return
     if data.startswith("diary:date:"):
         choice = data.rsplit(":", 1)[1]
         if choice == "custom":
@@ -2366,10 +2373,11 @@ async def stock_alert_worker(app: Application) -> None:
         try:
             chat_id = alert_value("stock_chat_id")
             if chat_id:
-                sent = {x for x in alert_value("stock_sent").split(",") if x}
-                changed = False
+                sent = {x for x in alert_value("stock_sent_v2").split(",") if x}
+                current_critical: set[str] = set()
                 for item in records("inventory"):
                     item_id = row_id_text(item)
+                    category = str(item.get("Kategori", "")).strip().casefold()
                     raw = str(item.get("Kalan Miktar", "")).strip()
                     if not raw or raw.casefold() == "stok bol":
                         continue
@@ -2377,18 +2385,19 @@ async def stock_alert_worker(app: Application) -> None:
                         remaining = parse_decimal(raw)
                     except Exception:
                         continue
-                    if remaining <= 1 and item_id not in sent:
+                    threshold = 0 if category in {"cihaz", "mekanik", "alet"} else 1
+                    if remaining <= threshold:
+                        current_critical.add(item_id)
+                    if remaining <= threshold and item_id not in sent:
+                        sent.add(item_id)
+                        set_alert_value("stock_sent_v2", ",".join(sorted(sent)))
                         await app.bot.send_message(
                             chat_id=int(chat_id),
                             text=f"Kritik stok uyarısı\n\nID {item_id} - {item.get('Malzeme / Alet','-')}: {format_decimal(remaining)} {item.get('Birim','')}",
                         )
-                        sent.add(item_id)
-                        changed = True
-                    if remaining > 1 and item_id in sent:
-                        sent.remove(item_id)
-                        changed = True
-                if changed:
-                    set_alert_value("stock_sent", ",".join(sorted(sent)))
+                new_sent = sent.intersection(current_critical)
+                if new_sent != sent:
+                    set_alert_value("stock_sent_v2", ",".join(sorted(new_sent)))
         except Exception:
             log.exception("Kritik stok kontrolünde hata")
         await asyncio.sleep(60)
@@ -2396,7 +2405,6 @@ async def stock_alert_worker(app: Application) -> None:
 
 async def post_init(app: Application) -> None:
     app.create_task(reminder_worker(app))
-    app.create_task(stock_alert_worker(app))
 
 
 async def ask_ai(question: str, user_id: int, context: ContextTypes.DEFAULT_TYPE) -> str:
@@ -3177,14 +3185,22 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             return
         await diary_ai_summary(update, context, date)
         return
+    if flow == "diary_delete":
+        await delete_by_id(update, "diary", text, "Günlük silindi.", diary_menu())
+        context.user_data.clear()
+        return
 
     if flow == "ess_flower":
         context.user_data["draft"]["flower"] = text
-        context.user_data["flow"] = "ess_oil"
-        await update.effective_message.reply_text("Hangi yağ? Örn: zeytinyağı, jojoba", reply_markup=back_cancel("m:essence"))
+        await update.effective_message.reply_text("Yağı stoktan seç:", reply_markup=inventory_buttons("essoil"))
         return
-    if flow == "ess_oil":
-        context.user_data["draft"]["oil"] = text
+    if flow == "ess_oil_amount":
+        try:
+            amount = parse_decimal(text)
+        except Exception:
+            await update.effective_message.reply_text("Miktar sayı olmalı.", reply_markup=back_cancel("m:essence"))
+            return
+        context.user_data["draft"]["oil_amount"] = amount
         context.user_data["flow"] = "ess_jar"
         await update.effective_message.reply_text("Kap/kavanoz adını yaz.", reply_markup=back_cancel("m:essence"))
         return
@@ -3205,8 +3221,13 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
     if flow == "ess_note":
         d = context.user_data["draft"]
+        ok, result, _undo = use_stock(d["oil_material"], d["oil_amount"], d.get("oil_unit", ""), "Esans", "" if text == "-" else text, d["date"], "", record_history=True)
+        if not ok:
+            await update.effective_message.reply_text(result, reply_markup=essence_menu())
+            return
         item_id = next_id("essences")
-        append_record("essences", ESSENCE_HEADERS, {"ID": item_id, "Baslangic": d["date"], "Cicek": d["flower"], "Yag": d["oil"], "Kap": d["jar"], "Gun": d["days"], "Not": "" if text == "-" else text, "Durum": "aktif", "CreatedAt": now().isoformat(timespec="seconds"), "ClosedAt": ""})
+        oil_text = f"{format_decimal(d['oil_amount'])} {d.get('oil_unit','')} {d['oil_material']}"
+        append_record("essences", ESSENCE_HEADERS, {"ID": item_id, "Baslangic": d["date"], "Cicek": d["flower"], "Yag": oil_text, "Kap": d["jar"], "Gun": d["days"], "Not": "" if text == "-" else text, "Durum": "aktif", "CreatedAt": now().isoformat(timespec="seconds"), "ClosedAt": ""})
         context.user_data.clear()
         await update.effective_message.reply_text(f"Esans başlatıldı. ID {item_id}", reply_markup=essence_menu())
         return
@@ -3448,6 +3469,14 @@ async def recipeadd_inventory_callback(update: Update, context: ContextTypes.DEF
     await edit_or_send(update, f"Malzeme: {item.get('Malzeme / Alet')}\nReçetedeki miktarı yaz:", back_cancel("m:recipes"))
 
 
+async def essoil_inventory_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, item: dict[str, Any]) -> None:
+    draft = context.user_data.setdefault("draft", {})
+    draft["oil_material"] = item.get("Malzeme / Alet")
+    draft["oil_unit"] = item.get("Birim", "")
+    context.user_data["flow"] = "ess_oil_amount"
+    await edit_or_send(update, f"Yağ: {item.get('Malzeme / Alet')}\nKullanılacak miktarı yaz:", back_cancel("m:essence"))
+
+
 async def reportstock_inventory_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, item: dict[str, Any]) -> None:
     await show_stock_report(update, str(item.get("Malzeme / Alet", "")))
 
@@ -3476,6 +3505,9 @@ async def handle_inventory_callback(update: Update, context: ContextTypes.DEFAUL
         return
     if action == "recipeadd":
         await recipeadd_inventory_callback(update, context, item)
+        return
+    if action == "essoil":
+        await essoil_inventory_callback(update, context, item)
         return
     if action == "reportstock":
         await reportstock_inventory_callback(update, context, item)
