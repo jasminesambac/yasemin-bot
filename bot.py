@@ -231,15 +231,51 @@ def back_cancel(back_to: str) -> InlineKeyboardMarkup:
 
 def main_menu() -> InlineKeyboardMarkup:
     return kb([
-        [("📦 Stok", "m:stock"), ("🔬 pH", "m:ph")],
-        [("📜 Geçmiş", "m:history"), ("📊 Rapor", "m:report")],
+        [("📍 Bugün", "m:today")],
+        [("📋 Kayıtlar", "g:records"), ("🌱 Bahçe", "g:garden")],
+        [("🧪 Üretim", "g:production"), ("🤖 AI", "g:ai")],
+        [("⚙️ Sistem", "g:system")],
+    ])
+
+
+def records_group_menu() -> InlineKeyboardMarkup:
+    return kb([
+        [("📜 Geçmiş", "m:history"), ("🔬 pH", "m:ph")],
+        [("📔 Günlük", "m:diary"), ("📸 Gözlem", "m:observation")],
+        [("📊 Rapor", "m:report")],
+        [("🔙 Geri", "m:main")],
+    ])
+
+
+def garden_group_menu() -> InlineKeyboardMarkup:
+    return kb([
+        [("📦 Stok", "m:stock"), ("🌱 Alanlar", "m:areas")],
+        [("🗓️ Plan", "m:plan"), ("📌 Sorun", "m:issues")],
         [("⏰ Hatırlatma", "m:reminder"), ("🌤️ Hava", "m:weather")],
-        [("🪱 Kompost", "m:compost"), ("🗓️ Plan", "m:plan")],
-        [("🌱 Alanlar", "m:areas"), ("🧪 Reçeteler", "m:recipes")],
-        [("📌 Sorun", "m:issues"), ("📔 Günlük", "m:diary")],
-        [("🌸 Esans", "m:essence"), ("📸 Gözlem", "m:observation")],
-        [("🤖 AI Sor", "m:ai"), ("💾 Yedekle", "backup")],
-        [("🧭 Durum", "m:status")],
+        [("🔙 Geri", "m:main")],
+    ])
+
+
+def production_group_menu() -> InlineKeyboardMarkup:
+    return kb([
+        [("🪱 Kompost", "m:compost"), ("🌸 Esans", "m:essence")],
+        [("🧪 Reçeteler", "m:recipes")],
+        [("🔙 Geri", "m:main")],
+    ])
+
+
+def ai_group_menu() -> InlineKeyboardMarkup:
+    return kb([
+        [("🤖 AI Sor", "m:ai"), ("📸 Foto AI", "obs:ai")],
+        [("🔙 Geri", "m:main")],
+    ])
+
+
+def system_group_menu() -> InlineKeyboardMarkup:
+    return kb([
+        [("🧭 Durum", "m:status"), ("💾 Yedekle", "backup")],
+        [("🚨 Kritik Stok", "stock:critical")],
+        [("🔙 Geri", "m:main")],
     ])
 
 
@@ -917,6 +953,36 @@ async def show_status(update: Update) -> None:
     await edit_or_send(update, text, main_menu())
 
 
+async def show_today(update: Update) -> None:
+    date = today_str()
+    ops = [r for r in operational_records() if parse_date(str(r.get("Tarih", ""))) == date]
+    plans = [r for r in records("plans") if parse_date(str(r.get("Tarih", ""))) == date and str(r.get("Durum", "bekliyor")).casefold() == "bekliyor"]
+    reminders = [r for r in records("reminders") if parse_date(str(r.get("Tarih", ""))) == date and str(r.get("Durum", "bekliyor")).casefold() == "bekliyor"]
+    issues = [r for r in records("issues") if str(r.get("Durum", "açık")).casefold() == "açık"]
+    ess_due = [r for r in records("essences") if str(r.get("Durum", "aktif")).casefold() == "aktif" and essence_due(r)]
+    critical = []
+    for item in records("inventory"):
+        raw = str(item.get("Kalan Miktar", "")).strip()
+        if not raw or raw.casefold() == "stok bol":
+            continue
+        try:
+            if parse_decimal(raw) <= 5:
+                critical.append(f"{item.get('Malzeme / Alet','-')} ({raw} {item.get('Birim','')})")
+        except Exception:
+            pass
+    text = f"Bugün - {date}\n\n"
+    text += f"İşlem: {len(ops)}\nPlan: {len(plans)}\nHatırlatma: {len(reminders)}\nAçık sorun: {len(issues)}\nSüresi gelen esans: {len(ess_due)}\nKritik stok: {len(critical)}\n"
+    if plans:
+        text += "\nPlanlar\n" + "\n".join(f"- ID {row_id_text(r)} {r.get('Islem','-')} / {r.get('Hedef','-')}" for r in plans[:8])
+    if reminders:
+        text += "\n\nHatırlatmalar\n" + "\n".join(f"- ID {row_id_text(r)} {r.get('Saat','-')} {r.get('Metin','-')}" for r in reminders[:8])
+    if ess_due:
+        text += "\n\nEsans\n" + "\n".join(f"- ID {row_id_text(r)} {r.get('Cicek','-')} / {r.get('Kap','-')}" for r in ess_due[:8])
+    if critical:
+        text += "\n\nKritik Stok\n" + "\n".join(f"- {x}" for x in critical[:8])
+    await edit_or_send(update, text[:MSG_LIMIT], main_menu())
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     context.user_data.clear()
     await show_home(update)
@@ -942,6 +1008,30 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if data == "m:main":
         context.user_data.clear()
         await show_home(update)
+        return
+    if data == "m:today":
+        context.user_data.clear()
+        await show_today(update)
+        return
+    if data == "g:records":
+        context.user_data.clear()
+        await edit_or_send(update, "Kayıtlar", records_group_menu())
+        return
+    if data == "g:garden":
+        context.user_data.clear()
+        await edit_or_send(update, "Bahçe", garden_group_menu())
+        return
+    if data == "g:production":
+        context.user_data.clear()
+        await edit_or_send(update, "Üretim", production_group_menu())
+        return
+    if data == "g:ai":
+        context.user_data.clear()
+        await edit_or_send(update, "AI", ai_group_menu())
+        return
+    if data == "g:system":
+        context.user_data.clear()
+        await edit_or_send(update, "Sistem", system_group_menu())
         return
     if data == "m:stock":
         context.user_data.clear()
