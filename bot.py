@@ -51,6 +51,9 @@ OBSERVATION_HEADERS = ["ID", "Tarih", "Kategori", "Not", "Foto_File_ID", "AI_Yor
 PLAN_HEADERS = ["ID", "Tarih", "Islem", "Hedef", "Malzeme_Miktar", "pH", "Not", "Durum", "CreatedAt", "CompletedAt"]
 AREA_HEADERS = ["ID", "Alan", "Not", "Durum", "CreatedAt"]
 RECIPE_HEADERS = ["ID", "Ad", "Islem", "Malzeme_Miktar", "pH", "Not", "Durum", "CreatedAt"]
+ISSUE_HEADERS = ["ID", "Tarih", "Alan", "Baslik", "Not", "Durum", "CreatedAt", "ClosedAt"]
+DIARY_HEADERS = ["ID", "Tarih", "Not", "CreatedAt"]
+ESSENCE_HEADERS = ["ID", "Baslangic", "Cicek", "Yag", "Kap", "Gun", "Not", "Durum", "CreatedAt", "ClosedAt"]
 
 SHEET: dict[str, gspread.Worksheet] = {}
 AI_CLIENT = None
@@ -233,8 +236,10 @@ def main_menu() -> InlineKeyboardMarkup:
         [("⏰ Hatırlatma", "m:reminder"), ("🌤️ Hava", "m:weather")],
         [("🪱 Kompost", "m:compost"), ("🗓️ Plan", "m:plan")],
         [("🌱 Alanlar", "m:areas"), ("🧪 Reçeteler", "m:recipes")],
-        [("📸 Gözlem", "m:observation"), ("🤖 AI Sor", "m:ai")],
-        [("💾 Yedekle", "backup"), ("🧭 Durum", "m:status")],
+        [("📌 Sorun", "m:issues"), ("📔 Günlük", "m:diary")],
+        [("🌸 Esans", "m:essence"), ("📸 Gözlem", "m:observation")],
+        [("🤖 AI Sor", "m:ai"), ("💾 Yedekle", "backup")],
+        [("🧭 Durum", "m:status")],
     ])
 
 
@@ -243,6 +248,7 @@ def stock_menu() -> InlineKeyboardMarkup:
         [("📋 Stok Listesi", "stock:list"), ("🔍 Stok Sorgula", "stock:search")],
         [("⬇️ Stoktan Düş", "stock:use"), ("➕ Yeni Malzeme Ekle", "stock:add")],
         [("❌ Malzeme Sil", "stock:delete"), ("↩️ Geri Al", "stock:undo")],
+        [("🚨 Kritik Stok", "stock:critical")],
         [("🔙 Geri", "m:main")],
     ])
 
@@ -302,6 +308,33 @@ def report_menu() -> InlineKeyboardMarkup:
     return kb([
         [("📊 Aylık Rapor", "report:month"), ("📅 Günlük Rapor", "report:daily")],
         [("📈 İstatistik", "report:stats"), ("📉 Stok Grafiği", "report:stock")],
+        [("🌿 Sezon Özeti", "report:season")],
+        [("🔙 Geri", "m:main")],
+    ])
+
+
+def issue_menu() -> InlineKeyboardMarkup:
+    return kb([
+        [("➕ Sorun Aç", "issue:add"), ("📋 Açık Sorunlar", "issue:list")],
+        [("📝 İşlem Ekle", "issue:note"), ("✅ Sorunu Kapat", "issue:close")],
+        [("📅 Sorun Geçmişi", "issue:history")],
+        [("🔙 Geri", "m:main")],
+    ])
+
+
+def diary_menu() -> InlineKeyboardMarkup:
+    return kb([
+        [("➕ Günlük Not Ekle", "diary:add"), ("📋 Son Günlükler", "diary:list")],
+        [("📅 Tarihli Günlük", "diary:date"), ("🤖 AI Gün Özeti", "diary:ai")],
+        [("🔙 Geri", "m:main")],
+    ])
+
+
+def essence_menu() -> InlineKeyboardMarkup:
+    return kb([
+        [("➕ Esans Başlat", "ess:add"), ("📋 Aktif Esanslar", "ess:list")],
+        [("⏳ Süresi Gelenler", "ess:due"), ("✅ Esansı Bitir", "ess:close")],
+        [("❌ Esans Sil", "ess:delete")],
         [("🔙 Geri", "m:main")],
     ])
 
@@ -375,7 +408,7 @@ def date_choice_menu(prefix: str) -> InlineKeyboardMarkup:
     if prefix == "rem":
         rows.append([("Her Gün", "rem:date:daily"), ("Haftalık", "rem:date:weekly")])
         rows.append([("Aylık", "rem:date:monthly")])
-    back_to = "m:history" if prefix == "histadd" else "m:compost" if prefix == "compadd" else "m:plan" if prefix == "planadd" else "m:reminder"
+    back_to = "m:history" if prefix == "histadd" else "m:compost" if prefix == "compadd" else "m:plan" if prefix == "planadd" else "m:diary" if prefix == "diary" else "m:reminder"
     rows.append([("Geri", back_to), ("İptal", "cancel"), ("Ana Menü", "m:main")])
     return kb(rows)
 
@@ -522,6 +555,9 @@ def init_sheets() -> None:
         "plans": PLAN_HEADERS,
         "areas": AREA_HEADERS,
         "recipes": RECIPE_HEADERS,
+        "issues": ISSUE_HEADERS,
+        "diary": DIARY_HEADERS,
+        "essences": ESSENCE_HEADERS,
     }
 
     try:
@@ -809,7 +845,7 @@ async def show_status(update: Update) -> None:
         return "Hazır" if value else "Eksik"
 
     counts = {}
-    for name in ["inventory", "history", "Kompost", "ph_records", "reminders", "observations", "plans", "areas", "recipes"]:
+    for name in ["inventory", "history", "Kompost", "ph_records", "reminders", "observations", "plans", "areas", "recipes", "issues", "diary", "essences"]:
         try:
             counts[name] = len(records(name))
         except Exception:
@@ -862,6 +898,9 @@ async def show_status(update: Update) -> None:
         f"Plan: {counts['plans']}\n"
         f"Alan: {counts['areas']}\n"
         f"Reçete: {counts['recipes']}\n"
+        f"Sorun: {counts['issues']}\n"
+        f"Günlük: {counts['diary']}\n"
+        f"Esans: {counts['essences']}\n"
     )
     if critical_stock:
         text += "\nKritik Stok\n" + "\n".join(critical_stock[:12])
@@ -931,6 +970,18 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if data == "m:recipes":
         context.user_data.clear()
         await edit_or_send(update, "Reçeteler", recipe_menu())
+        return
+    if data == "m:issues":
+        context.user_data.clear()
+        await edit_or_send(update, "Sorun Takibi", issue_menu())
+        return
+    if data == "m:diary":
+        context.user_data.clear()
+        await edit_or_send(update, "Günlük", diary_menu())
+        return
+    if data == "m:essence":
+        context.user_data.clear()
+        await edit_or_send(update, "Esans Takibi", essence_menu())
         return
     if data == "m:report":
         context.user_data.clear()
@@ -1004,6 +1055,15 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if data.startswith("recipe:") or data.startswith("recipeadd:"):
         await handle_recipe_callback(update, context, data)
         return
+    if data.startswith("issue:"):
+        await handle_issue_callback(update, context, data)
+        return
+    if data.startswith("diary:"):
+        await handle_diary_callback(update, context, data)
+        return
+    if data.startswith("ess:"):
+        await handle_essence_callback(update, context, data)
+        return
     if data.startswith("report:"):
         await handle_report_callback(update, context, data)
         return
@@ -1061,6 +1121,21 @@ async def handle_stock_callback(update: Update, context: ContextTypes.DEFAULT_TY
         add_history("GERİ ALINDI", undo["material"], undo["amount"], undo["unit"], "", "Son stok düşme işlemi geri alındı")
         context.user_data.pop("last_stock_use", None)
         await edit_or_send(update, f"Geri alındı.\n{undo['material']} stoğu tekrar {undo['old_remaining']} oldu.", stock_menu())
+    if data == "stock:critical":
+        text = "Kritik Stok\n\n"
+        found = False
+        for item in records("inventory"):
+            raw = str(item.get("Kalan Miktar", "")).strip()
+            if not raw or raw.casefold() == "stok bol":
+                continue
+            try:
+                kalan = parse_decimal(raw)
+            except Exception:
+                continue
+            if kalan <= 5:
+                found = True
+                text += f"ID {row_id_text(item)} - {item.get('Malzeme / Alet','-')}: {format_decimal(kalan)} {item.get('Birim','')}\n"
+        await edit_or_send(update, text if found else "Kritik stok yok.", stock_menu())
 
 
 async def handle_inventory_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, data: str) -> None:
@@ -1485,6 +1560,76 @@ async def handle_recipe_callback(update: Update, context: ContextTypes.DEFAULT_T
         await edit_or_send(update, "Reçete notu yaz. Not yoksa '-' yaz.", back_cancel("m:recipes"))
 
 
+async def handle_issue_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, data: str) -> None:
+    if data == "issue:add":
+        context.user_data["flow"] = "issue_add_area"
+        context.user_data["draft"] = {}
+        await edit_or_send(update, "Sorun hangi alanda? Alan adını yaz. Örn: Sera 1", back_cancel("m:issues"))
+        return
+    if data == "issue:list":
+        await show_issues(update, open_only=True)
+        return
+    if data == "issue:history":
+        await show_issues(update, open_only=False)
+        return
+    if data == "issue:note":
+        context.user_data["flow"] = "issue_note_id"
+        await edit_or_send(update, "İşlem/not eklenecek sorun ID numarasını yaz.", back_cancel("m:issues"))
+        return
+    if data == "issue:close":
+        context.user_data["flow"] = "issue_close_id"
+        await edit_or_send(update, "Kapatılacak sorun ID numarasını yaz.", back_cancel("m:issues"))
+
+
+async def handle_diary_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, data: str) -> None:
+    if data == "diary:add":
+        context.user_data["flow"] = "diary_date"
+        context.user_data["draft"] = {}
+        await edit_or_send(update, "Günlük tarihi seç:", date_choice_menu("diary"))
+        return
+    if data == "diary:list":
+        await show_diary(update)
+        return
+    if data == "diary:date":
+        context.user_data["flow"] = "diary_find_date"
+        await edit_or_send(update, "Günlük tarihini yaz. Örn: 14-06-2026", back_cancel("m:diary"))
+        return
+    if data == "diary:ai":
+        context.user_data["flow"] = "diary_ai_date"
+        await edit_or_send(update, "Özetlenecek tarihi yaz. Örn: bugün veya 14-06-2026", back_cancel("m:diary"))
+        return
+    if data.startswith("diary:date:"):
+        choice = data.rsplit(":", 1)[1]
+        if choice == "custom":
+            context.user_data["flow"] = "diary_custom_date"
+            await edit_or_send(update, "Özel tarihi yaz. Örn: 14-06-2026", back_cancel("diary:add"))
+            return
+        context.user_data.setdefault("draft", {})["date"] = today_str() if choice == "today" else (now() - timedelta(days=1)).strftime(DATE_FMT)
+        context.user_data["flow"] = "diary_note"
+        await edit_or_send(update, "Günlük notunu yaz.", back_cancel("m:diary"))
+
+
+async def handle_essence_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, data: str) -> None:
+    if data == "ess:add":
+        context.user_data["flow"] = "ess_flower"
+        context.user_data["draft"] = {"date": today_str()}
+        await edit_or_send(update, "Esansa yatırılan çiçeği yaz.", back_cancel("m:essence"))
+        return
+    if data == "ess:list":
+        await show_essences(update, due_only=False)
+        return
+    if data == "ess:due":
+        await show_essences(update, due_only=True)
+        return
+    if data == "ess:close":
+        context.user_data["flow"] = "ess_close"
+        await edit_or_send(update, "Bitirilecek esans ID numarasını yaz.", back_cancel("m:essence"))
+        return
+    if data == "ess:delete":
+        context.user_data["flow"] = "ess_delete"
+        await edit_or_send(update, "Silinecek esans ID numarasını yaz.", back_cancel("m:essence"))
+
+
 async def show_history(update: Update, count: int) -> None:
     rows = records("history")
     if not rows:
@@ -1773,6 +1918,69 @@ async def apply_recipe(update: Update, recipe_id: str) -> None:
     await update.effective_message.reply_text("Bu reçete ID bulunamadı.", reply_markup=recipe_menu())
 
 
+def issue_text(row: dict[str, Any]) -> str:
+    return f"ID {row_id_text(row)} - {row.get('Tarih', '-')}: {row.get('Baslik', '-')}\nAlan: {row.get('Alan', '-')}\nDurum: {row.get('Durum', '-')}\nNot: {row.get('Not', '-')}"
+
+
+async def show_issues(update: Update, *, open_only: bool) -> None:
+    rows = records("issues")
+    if open_only:
+        rows = [r for r in rows if str(r.get("Durum", "açık")).casefold() == "açık"]
+    if not rows:
+        await edit_or_send(update, "Sorun kaydı yok.", issue_menu())
+        return
+    text = ("Açık Sorunlar" if open_only else "Sorun Geçmişi") + "\n\n"
+    for row in rows[::-1][:30]:
+        text += issue_text(row) + "\n\n"
+    await edit_or_send(update, text[:MSG_LIMIT], issue_menu())
+
+
+async def show_diary(update: Update, date: str | None = None) -> None:
+    rows = records("diary")
+    if date:
+        rows = [r for r in rows if parse_date(str(r.get("Tarih", ""))) == date]
+    if not rows:
+        await edit_or_send(update, "Günlük kaydı yok.", diary_menu())
+        return
+    text = ("Günlükler" if not date else f"{date} Günlüğü") + "\n\n"
+    for row in rows[-10:][::-1]:
+        text += f"ID {row_id_text(row)} - {row.get('Tarih', '-')}\n{row.get('Not', '-')}\n\n"
+    await edit_or_send(update, text[:MSG_LIMIT], diary_menu())
+
+
+async def diary_ai_summary(update: Update, context: ContextTypes.DEFAULT_TYPE, date: str) -> None:
+    parts = [f"{date} günü için kısa bahçe özeti çıkar."]
+    parts += [f"İşlem: {r.get('Islem')} {history_material(r)} {r.get('Not','')}" for r in operational_records() if parse_date(str(r.get("Tarih", ""))) == date]
+    parts += [f"Günlük: {r.get('Not')}" for r in records("diary") if parse_date(str(r.get("Tarih", ""))) == date]
+    parts += [f"Gözlem: {r.get('Not')}" for r in records("observations") if parse_date(str(r.get("Tarih", ""))) == date]
+    answer = await ask_gemini("\n".join(parts), context)
+    await update.effective_message.reply_text("AI Gün Özeti\n\n" + answer, reply_markup=diary_menu())
+
+
+def essence_due(row: dict[str, Any]) -> bool:
+    date = parse_date(str(row.get("Baslangic", "")))
+    try:
+        days = int(float(str(row.get("Gun", "0")).replace(",", ".")))
+    except Exception:
+        days = 0
+    if not date or not days:
+        return False
+    return datetime.strptime(date, DATE_FMT) + timedelta(days=days) <= now()
+
+
+async def show_essences(update: Update, *, due_only: bool) -> None:
+    rows = [r for r in records("essences") if str(r.get("Durum", "aktif")).casefold() == "aktif"]
+    if due_only:
+        rows = [r for r in rows if essence_due(r)]
+    if not rows:
+        await edit_or_send(update, "Esans kaydı yok.", essence_menu())
+        return
+    text = ("Süresi Gelen Esanslar" if due_only else "Aktif Esanslar") + "\n\n"
+    for row in rows[::-1][:30]:
+        text += f"ID {row_id_text(row)} - {row.get('Baslangic','-')}: {row.get('Cicek','-')} + {row.get('Yag','-')}\nKap: {row.get('Kap','-')} | Gün: {row.get('Gun','-')}\nNot: {row.get('Not','-')}\n\n"
+    await edit_or_send(update, text[:MSG_LIMIT], essence_menu())
+
+
 async def show_observation_page(update: Update, page: int = 0, page_size: int = 6) -> None:
     rows = records("observations")
     if not rows:
@@ -1822,6 +2030,16 @@ async def handle_report_callback(update: Update, context: ContextTypes.DEFAULT_T
         text += "\nEn çok kullanılan malzemeler:\n"
         for name, count in mats.most_common(10):
             text += f"- {name}: {count} işlem\n"
+        await edit_or_send(update, text, report_menu())
+        return
+    if data == "report:season":
+        year = now().year
+        rows = [r for r in operational_records() if (parse_date(str(r.get("Tarih", ""))) or "").endswith(str(year))]
+        issues_open = [r for r in records("issues") if str(r.get("Durum", "açık")).casefold() == "açık"]
+        ess_active = [r for r in records("essences") if str(r.get("Durum", "aktif")).casefold() == "aktif"]
+        text = f"Sezon Özeti - {year}\n\nToplam işlem: {len(rows)}\nAçık sorun: {len(issues_open)}\nAktif esans: {len(ess_active)}\nGözlem: {len(records('observations'))}\nPlan: {len(records('plans'))}\n\nİşlem türleri:\n"
+        for name, count in Counter(r.get("Islem", "Bilinmiyor") for r in rows).most_common(12):
+            text += f"- {name}: {count}\n"
         await edit_or_send(update, text, report_menu())
         return
     if data == "report:month":
@@ -1975,6 +2193,9 @@ async def send_backup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             ("plans.csv", "plans"),
             ("areas.csv", "areas"),
             ("recipes.csv", "recipes"),
+            ("issues.csv", "issues"),
+            ("diary.csv", "diary"),
+            ("essences.csv", "essences"),
         ]:
             out = io.StringIO()
             writer = csv.writer(out)
@@ -2727,6 +2948,136 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
     if flow == "recipe_delete":
         await delete_by_id(update, "recipes", text, "Reçete silindi.", recipe_menu())
+        context.user_data.clear()
+        return
+
+    if flow == "issue_add_area":
+        context.user_data["draft"] = {"area": "" if text == "-" else text}
+        context.user_data["flow"] = "issue_add_title"
+        await update.effective_message.reply_text("Sorun başlığını yaz.", reply_markup=back_cancel("m:issues"))
+        return
+    if flow == "issue_add_title":
+        context.user_data["draft"]["title"] = text
+        context.user_data["flow"] = "issue_add_note"
+        await update.effective_message.reply_text("Sorun notunu yaz.", reply_markup=back_cancel("m:issues"))
+        return
+    if flow == "issue_add_note":
+        d = context.user_data["draft"]
+        item_id = next_id("issues")
+        append_record("issues", ISSUE_HEADERS, {"ID": item_id, "Tarih": today_str(), "Alan": d.get("area", ""), "Baslik": d["title"], "Not": text, "Durum": "açık", "CreatedAt": now().isoformat(timespec="seconds"), "ClosedAt": ""})
+        context.user_data.clear()
+        await update.effective_message.reply_text(f"Sorun açıldı. ID {item_id}", reply_markup=issue_menu())
+        return
+    if flow == "issue_note_id":
+        context.user_data["draft"] = {"id": text.strip()}
+        context.user_data["flow"] = "issue_note_text"
+        await update.effective_message.reply_text("Eklenecek işlem/notu yaz.", reply_markup=back_cancel("m:issues"))
+        return
+    if flow == "issue_note_text":
+        wanted = context.user_data["draft"]["id"]
+        for row in records("issues"):
+            if row_id_text(row) == wanted:
+                set_cell_by_header("issues", int(row["_row"]), "Not", f"{row.get('Not','')}\n[{today_str()}] {text}".strip())
+                context.user_data.clear()
+                await update.effective_message.reply_text("Soruna not eklendi.", reply_markup=issue_menu())
+                return
+        await update.effective_message.reply_text("Sorun ID bulunamadı.", reply_markup=issue_menu())
+        context.user_data.clear()
+        return
+    if flow == "issue_close_id":
+        context.user_data["draft"] = {"id": text.strip()}
+        context.user_data["flow"] = "issue_close_note"
+        await update.effective_message.reply_text("Kapanış notu yaz.", reply_markup=back_cancel("m:issues"))
+        return
+    if flow == "issue_close_note":
+        wanted = context.user_data["draft"]["id"]
+        for row in records("issues"):
+            if row_id_text(row) == wanted:
+                set_cell_by_header("issues", int(row["_row"]), "Durum", "kapalı")
+                set_cell_by_header("issues", int(row["_row"]), "ClosedAt", now().isoformat(timespec="seconds"))
+                set_cell_by_header("issues", int(row["_row"]), "Not", f"{row.get('Not','')}\n[KAPANIŞ {today_str()}] {text}".strip())
+                context.user_data.clear()
+                await update.effective_message.reply_text("Sorun kapatıldı.", reply_markup=issue_menu())
+                return
+        await update.effective_message.reply_text("Sorun ID bulunamadı.", reply_markup=issue_menu())
+        context.user_data.clear()
+        return
+
+    if flow == "diary_custom_date":
+        date = parse_date(text)
+        if not date:
+            await update.effective_message.reply_text("Tarih anlaşılamadı.", reply_markup=back_cancel("m:diary"))
+            return
+        context.user_data["draft"]["date"] = date
+        context.user_data["flow"] = "diary_note"
+        await update.effective_message.reply_text("Günlük notunu yaz.", reply_markup=back_cancel("m:diary"))
+        return
+    if flow == "diary_note":
+        item_id = next_id("diary")
+        append_record("diary", DIARY_HEADERS, {"ID": item_id, "Tarih": context.user_data["draft"]["date"], "Not": text, "CreatedAt": now().isoformat(timespec="seconds")})
+        context.user_data.clear()
+        await update.effective_message.reply_text(f"Günlük kaydedildi. ID {item_id}", reply_markup=diary_menu())
+        return
+    if flow == "diary_find_date":
+        date = parse_date(text)
+        if not date:
+            await update.effective_message.reply_text("Tarih anlaşılamadı.", reply_markup=back_cancel("m:diary"))
+            return
+        await show_diary(update, date)
+        return
+    if flow == "diary_ai_date":
+        date = parse_date(text)
+        if not date:
+            await update.effective_message.reply_text("Tarih anlaşılamadı.", reply_markup=back_cancel("m:diary"))
+            return
+        await diary_ai_summary(update, context, date)
+        return
+
+    if flow == "ess_flower":
+        context.user_data["draft"]["flower"] = text
+        context.user_data["flow"] = "ess_oil"
+        await update.effective_message.reply_text("Hangi yağ? Örn: zeytinyağı, jojoba", reply_markup=back_cancel("m:essence"))
+        return
+    if flow == "ess_oil":
+        context.user_data["draft"]["oil"] = text
+        context.user_data["flow"] = "ess_jar"
+        await update.effective_message.reply_text("Kap/kavanoz adını yaz.", reply_markup=back_cancel("m:essence"))
+        return
+    if flow == "ess_jar":
+        context.user_data["draft"]["jar"] = text
+        context.user_data["flow"] = "ess_days"
+        await update.effective_message.reply_text("Kaç gün bekleyecek?", reply_markup=back_cancel("m:essence"))
+        return
+    if flow == "ess_days":
+        try:
+            int(text)
+        except Exception:
+            await update.effective_message.reply_text("Gün sayı olmalı.", reply_markup=back_cancel("m:essence"))
+            return
+        context.user_data["draft"]["days"] = text
+        context.user_data["flow"] = "ess_note"
+        await update.effective_message.reply_text("Not yaz. Yoksa '-' yaz.", reply_markup=back_cancel("m:essence"))
+        return
+    if flow == "ess_note":
+        d = context.user_data["draft"]
+        item_id = next_id("essences")
+        append_record("essences", ESSENCE_HEADERS, {"ID": item_id, "Baslangic": d["date"], "Cicek": d["flower"], "Yag": d["oil"], "Kap": d["jar"], "Gun": d["days"], "Not": "" if text == "-" else text, "Durum": "aktif", "CreatedAt": now().isoformat(timespec="seconds"), "ClosedAt": ""})
+        context.user_data.clear()
+        await update.effective_message.reply_text(f"Esans başlatıldı. ID {item_id}", reply_markup=essence_menu())
+        return
+    if flow == "ess_close":
+        for row in records("essences"):
+            if row_id_text(row) == text.strip():
+                set_cell_by_header("essences", int(row["_row"]), "Durum", "bitti")
+                set_cell_by_header("essences", int(row["_row"]), "ClosedAt", now().isoformat(timespec="seconds"))
+                await update.effective_message.reply_text("Esans bitirildi.", reply_markup=essence_menu())
+                context.user_data.clear()
+                return
+        await update.effective_message.reply_text("Esans ID bulunamadı.", reply_markup=essence_menu())
+        context.user_data.clear()
+        return
+    if flow == "ess_delete":
+        await delete_by_id(update, "essences", text, "Esans silindi.", essence_menu())
         context.user_data.clear()
         return
 
