@@ -1,4 +1,6 @@
 import asyncio
+import base64
+import calendar
 import csv
 import io
 import json
@@ -37,12 +39,15 @@ CREDENTIALS_JSON = os.getenv("GOOGLE_SHEETS_CREDENTIALS", "").strip()
 AGNES_API_KEY = os.getenv("AGNES_API_KEY", "").strip()
 AGNES_BASE_URL = os.getenv("AGNES_BASE_URL", "https://apihub.agnes-ai.com/v1").strip()
 AGNES_MODEL = os.getenv("AGNES_MODEL", "agnes-2.0-flash").strip()
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash").strip()
 
 INVENTORY_HEADERS = ["ID", "Kategori", "Malzeme / Alet", "Başlangıç Miktarı", "Kullanılan", "Kalan Miktar", "Birim", "Görevi / Not", "CreatedAt"]
 HISTORY_HEADERS = ["ID", "Tarih", "Islem", "Malzeme", "Miktar", "Birim", "pH", "Not", "CreatedAt"]
 KOMPOST_HEADERS = ["Tarih", "Islem", "Kullanilan_Malzeme_Miktar", "pH", "Not", "ID"]
 PH_HEADERS = ["ID", "Tarih", "Teneke_No", "pH", "Not", "CreatedAt"]
-REMINDER_HEADERS = ["ID", "Tarih", "Saat", "Metin", "Durum", "Chat_ID", "Tekrar", "CreatedAt"]
+REMINDER_HEADERS = ["ID", "Tarih", "Saat", "Metin", "Durum", "Chat_ID", "Tekrar", "Hafta_Gunu", "Ay_Gunu", "CreatedAt"]
+OBSERVATION_HEADERS = ["ID", "Tarih", "Kategori", "Not", "Foto_File_ID", "AI_Yorum", "CreatedAt"]
 
 SHEET: dict[str, gspread.Worksheet] = {}
 AI_CLIENT = None
@@ -119,6 +124,54 @@ def parse_datetime(date_value: Any, time_value: Any) -> datetime | None:
         return None
 
 
+def next_weekday_date(weekday: int, from_day: datetime | None = None) -> str:
+    base = (from_day or now()).date()
+    days = (weekday - base.weekday()) % 7
+    target = base + timedelta(days=days)
+    return target.strftime(DATE_FMT)
+
+
+def next_monthday_date(day: int, from_day: datetime | None = None) -> str:
+    base = (from_day or now()).date()
+    day = max(1, min(day, 31))
+    last_day = calendar.monthrange(base.year, base.month)[1]
+    target = base.replace(day=min(day, last_day))
+    if target < base:
+        year = base.year + (1 if base.month == 12 else 0)
+        month = 1 if base.month == 12 else base.month + 1
+        last_day = calendar.monthrange(year, month)[1]
+        target = target.replace(year=year, month=month, day=min(day, last_day))
+    return target.strftime(DATE_FMT)
+
+
+def next_monthly_after(due: datetime, day: int, current: datetime) -> datetime:
+    year = due.year
+    month = due.month
+    while True:
+        month += 1
+        if month == 13:
+            month = 1
+            year += 1
+        last_day = calendar.monthrange(year, month)[1]
+        target = due.replace(year=year, month=month, day=min(day, last_day))
+        if target > current:
+            return target
+
+
+def repeat_label(row_or_repeat: Any) -> str:
+    repeat = row_or_repeat
+    if isinstance(row_or_repeat, dict):
+        repeat = row_or_repeat.get("Tekrar", "tek")
+    repeat = str(repeat or "tek").strip().casefold()
+    if repeat in {"günlük", "gunluk", "her gün", "hergun", "daily"}:
+        return "Her gün"
+    if repeat in {"haftalık", "haftalik", "weekly"}:
+        return "Haftalık"
+    if repeat in {"aylık", "aylik", "monthly"}:
+        return "Aylık"
+    return "Tek seferlik"
+
+
 def chunks(text: str, limit: int = MSG_LIMIT) -> list[str]:
     if len(text) <= limit:
         return [text]
@@ -175,8 +228,8 @@ def main_menu() -> InlineKeyboardMarkup:
         [("📦 Stok", "m:stock"), ("🔬 pH", "m:ph")],
         [("📜 Geçmiş", "m:history"), ("📊 Rapor", "m:report")],
         [("⏰ Hatırlatma", "m:reminder"), ("🌤️ Hava", "m:weather")],
-        [("🪱 Kompost", "m:compost"), ("🤖 AI Sor", "m:ai")],
-        [("💾 Yedekle", "backup")],
+        [("🪱 Kompost", "m:compost"), ("📸 Gözlem", "m:observation")],
+        [("🤖 AI Sor", "m:ai"), ("💾 Yedekle", "backup")],
     ])
 
 
@@ -231,6 +284,15 @@ def reminder_menu() -> InlineKeyboardMarkup:
     ])
 
 
+def observation_menu() -> InlineKeyboardMarkup:
+    return kb([
+        [("📷 Fotoğraflı Gözlem Ekle", "obs:add"), ("🤖 Fotoğrafı AI Yorumla", "obs:ai")],
+        [("📋 Gözlem Geçmişi", "obs:all:0"), ("📅 Tarihli Gözlemler", "obs:date")],
+        [("❌ Gözlem Sil", "obs:delete")],
+        [("🔙 Geri", "m:main")],
+    ])
+
+
 def weather_menu() -> InlineKeyboardMarkup:
     return kb([
         [("🌤️ Anlık Hava", "weather:now"), ("📊 Aylık Hava", "weather:month")],
@@ -271,9 +333,50 @@ def date_choice_menu(prefix: str) -> InlineKeyboardMarkup:
         [("Özel Tarih", f"{prefix}:date:custom")],
     ]
     if prefix == "rem":
-        rows.append([("Her Gün", "rem:date:daily")])
+        rows.append([("Her Gün", "rem:date:daily"), ("Haftalık", "rem:date:weekly")])
+        rows.append([("Aylık", "rem:date:monthly")])
     back_to = "m:history" if prefix == "histadd" else "m:compost" if prefix == "compadd" else "m:reminder"
     rows.append([("Geri", back_to), ("İptal", "cancel")])
+    return kb(rows)
+
+
+def weekday_menu() -> InlineKeyboardMarkup:
+    days = ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"]
+    rows = [[(day, f"rem:weekday:{i}")] for i, day in enumerate(days)]
+    rows.append([("Geri", "rem:add"), ("İptal", "cancel")])
+    return kb(rows)
+
+
+def monthday_menu() -> InlineKeyboardMarkup:
+    rows: list[list[tuple[str, str]]] = []
+    for start in range(1, 32, 5):
+        rows.append([(str(day), f"rem:monthday:{day}") for day in range(start, min(start + 5, 32))])
+    rows.append([("Geri", "rem:add"), ("İptal", "cancel")])
+    return kb(rows)
+
+
+def reminder_calendar_menu(year: int | None = None, month: int | None = None) -> InlineKeyboardMarkup:
+    current = now()
+    year = year or current.year
+    month = month or current.month
+    rows: list[list[tuple[str, str]]] = [[(f"{month:02d}-{year}", "noop")]]
+    rows.append([("Pzt", "noop"), ("Sal", "noop"), ("Çar", "noop"), ("Per", "noop"), ("Cum", "noop"), ("Cmt", "noop"), ("Paz", "noop")])
+    for week in calendar.monthcalendar(year, month):
+        line = []
+        for day in week:
+            if day == 0:
+                line.append((" ", "noop"))
+            else:
+                date_text = datetime(year, month, day).strftime(DATE_FMT)
+                line.append((str(day), f"rem:calday:{date_text}"))
+        rows.append(line)
+    prev_year = year - 1 if month == 1 else year
+    prev_month = 12 if month == 1 else month - 1
+    next_year = year + 1 if month == 12 else year
+    next_month = 1 if month == 12 else month + 1
+    rows.append([("Önceki Ay", f"rem:cal:{prev_year}:{prev_month}"), ("Sonraki Ay", f"rem:cal:{next_year}:{next_month}")])
+    rows.append([("Tarih Yaz", "rem:date:custom_text")])
+    rows.append([("Geri", "rem:add"), ("İptal", "cancel")])
     return kb(rows)
 
 
@@ -348,6 +451,7 @@ def init_sheets() -> None:
         "Kompost": KOMPOST_HEADERS,
         "ph_records": PH_HEADERS,
         "reminders": REMINDER_HEADERS,
+        "observations": OBSERVATION_HEADERS,
     }
 
     try:
@@ -625,6 +729,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     await query.answer()
     data = query.data or ""
 
+    if data == "noop":
+        return
     if data == "cancel":
         await cancel(update, context)
         return
@@ -655,6 +761,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if data == "m:reminder":
         context.user_data.clear()
         await edit_or_send(update, "Hatırlatmalar", reminder_menu())
+        return
+    if data == "m:observation":
+        context.user_data.clear()
+        await edit_or_send(update, "Gözlem", observation_menu())
         return
     if data == "m:weather":
         context.user_data.clear()
@@ -691,6 +801,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
     if data.startswith("rem:"):
         await handle_reminder_callback(update, context, data)
+        return
+    if data.startswith("obs:"):
+        await handle_observation_callback(update, context, data)
         return
     if data.startswith("weather:") or data.startswith("weathernow:") or data.startswith("weathermonth:"):
         await handle_weather_callback(update, context, data)
@@ -1161,6 +1274,42 @@ async def send_compost_file(update: Update) -> None:
     await message.reply_document(InputFile(buffer, filename=f"kompost_gecmis_{today_str()}.txt"), caption="Kompost geçmiş dosyası hazır.")
 
 
+def observation_row_text(row: dict[str, Any]) -> str:
+    text = f"ID {row_id_text(row)} - {row.get('Tarih', '-')}: {row.get('Kategori', 'Gözlem')}\n"
+    if row.get("Not"):
+        text += f"Not: {row.get('Not')}\n"
+    if row.get("AI_Yorum"):
+        text += f"AI: {str(row.get('AI_Yorum'))[:250]}"
+        if len(str(row.get("AI_Yorum"))) > 250:
+            text += "..."
+        text += "\n"
+    return text.rstrip()
+
+
+async def show_observation_page(update: Update, page: int = 0, page_size: int = 6) -> None:
+    rows = records("observations")
+    if not rows:
+        await edit_or_send(update, "Gözlem kaydı yok.", observation_menu())
+        return
+    total = len(rows)
+    total_pages = max(1, (total + page_size - 1) // page_size)
+    page = max(0, min(page, total_pages - 1))
+    page_rows = rows[::-1][page * page_size:(page + 1) * page_size]
+    text = f"Gözlem Geçmişi\nSayfa {page + 1}/{total_pages} - Toplam {total} kayıt\n\n"
+    for row in page_rows:
+        text += observation_row_text(row) + "\n\n"
+    nav: list[tuple[str, str]] = []
+    if page > 0:
+        nav.append(("Önceki", f"obs:all:{page - 1}"))
+    if page < total_pages - 1:
+        nav.append(("Sonraki", f"obs:all:{page + 1}"))
+    rows_kb = []
+    if nav:
+        rows_kb.append(nav)
+    rows_kb.append([("Geri", "m:observation"), ("Ana Menü", "m:main")])
+    await edit_or_send(update, text, kb(rows_kb))
+
+
 async def handle_report_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, data: str) -> None:
     if data == "report:daily":
         rows = [r for r in operational_records() if parse_date(str(r.get("Tarih", ""))) == today_str()]
@@ -1210,7 +1359,7 @@ async def handle_reminder_callback(update: Update, context: ContextTypes.DEFAULT
             return
         text = "Bekleyen Hatırlatmalar\n\n"
         for row in rows:
-            text += f"ID {row_id_text(row)} - {row.get('Tarih', '-')} {row.get('Saat', '-')}: {row.get('Metin', '-')}\n"
+            text += f"ID {row_id_text(row)} - {row.get('Tarih', '-')} {row.get('Saat', '-')} ({repeat_label(row)}): {row.get('Metin', '-')}\n"
         await edit_or_send(update, text, reminder_menu())
         return
     if data == "rem:delete":
@@ -1220,8 +1369,17 @@ async def handle_reminder_callback(update: Update, context: ContextTypes.DEFAULT
     if data.startswith("rem:date:"):
         choice = data.rsplit(":", 1)[1]
         if choice == "custom":
+            await edit_or_send(update, "Tarih seç veya elle yaz:", reminder_calendar_menu())
+            return
+        if choice == "custom_text":
             context.user_data["flow"] = "rem_custom_date"
             await edit_or_send(update, "Özel tarihi yaz. Örn: 14-06-2026", back_cancel("rem:add"))
+            return
+        if choice == "weekly":
+            await edit_or_send(update, "Haftanın hangi günü hatırlatayım?", weekday_menu())
+            return
+        if choice == "monthly":
+            await edit_or_send(update, "Her ayın kaçıncı günü hatırlatayım?", monthday_menu())
             return
         draft = context.user_data.setdefault("draft", {})
         if choice == "daily":
@@ -1241,6 +1399,33 @@ async def handle_reminder_callback(update: Update, context: ContextTypes.DEFAULT
         context.user_data.setdefault("draft", {})["time"] = choice
         context.user_data["flow"] = "rem_text"
         await edit_or_send(update, "Hatırlatma metnini yaz:", back_cancel("rem:add"))
+        return
+    if data.startswith("rem:cal:"):
+        _, _, year_s, month_s = data.split(":")
+        await edit_or_send(update, "Tarih seç veya elle yaz:", reminder_calendar_menu(int(year_s), int(month_s)))
+        return
+    if data.startswith("rem:calday:"):
+        date = data.split(":", 2)[2]
+        draft = context.user_data.setdefault("draft", {})
+        draft["date"] = date
+        draft["repeat"] = "tek"
+        await edit_or_send(update, "Saat seç:", time_choice_menu())
+        return
+    if data.startswith("rem:weekday:"):
+        weekday = int(data.rsplit(":", 1)[1])
+        draft = context.user_data.setdefault("draft", {})
+        draft["date"] = next_weekday_date(weekday)
+        draft["repeat"] = "haftalık"
+        draft["weekday"] = weekday
+        await edit_or_send(update, "Saat seç:", time_choice_menu())
+        return
+    if data.startswith("rem:monthday:"):
+        monthday = int(data.rsplit(":", 1)[1])
+        draft = context.user_data.setdefault("draft", {})
+        draft["date"] = next_monthday_date(monthday)
+        draft["repeat"] = "aylık"
+        draft["monthday"] = monthday
+        await edit_or_send(update, "Saat seç:", time_choice_menu())
 
 
 async def handle_weather_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, data: str) -> None:
@@ -1259,6 +1444,33 @@ async def handle_weather_callback(update: Update, context: ContextTypes.DEFAULT_
         await show_weather(update, city, monthly=prefix == "weathermonth")
 
 
+async def handle_observation_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, data: str) -> None:
+    if data == "obs:add":
+        context.user_data["flow"] = "obs_note"
+        context.user_data["draft"] = {"ai": False, "category": "Gözlem"}
+        await edit_or_send(update, "Gözlem notunu yaz. Kısa da olabilir. Sonra fotoğraf isteyeceğim.", back_cancel("m:observation"))
+        return
+    if data == "obs:ai":
+        context.user_data["flow"] = "obs_note"
+        context.user_data["draft"] = {"ai": True, "category": "AI Gözlem"}
+        await edit_or_send(update, "Fotoğrafla birlikte yorumlatmak istediğin şeyi yaz. Sonra fotoğraf isteyeceğim.", back_cancel("m:observation"))
+        return
+    if data.startswith("obs:all:"):
+        try:
+            page = int(data.rsplit(":", 1)[1])
+        except ValueError:
+            page = 0
+        await show_observation_page(update, page)
+        return
+    if data == "obs:date":
+        context.user_data["flow"] = "obs_date"
+        await edit_or_send(update, "Gözlem tarihini yaz. Örn: 14-06-2026 veya 2026-06-14", back_cancel("m:observation"))
+        return
+    if data == "obs:delete":
+        context.user_data["flow"] = "obs_delete"
+        await edit_or_send(update, "Silmek istediğin gözlem ID numarasını yaz.", back_cancel("m:observation"))
+
+
 async def send_backup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     message = update.effective_message
     if not message:
@@ -1272,6 +1484,7 @@ async def send_backup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             ("kompost.csv", "Kompost"),
             ("ph_records.csv", "ph_records"),
             ("reminders.csv", "reminders"),
+            ("observations.csv", "observations"),
         ]:
             out = io.StringIO()
             writer = csv.writer(out)
@@ -1295,10 +1508,25 @@ async def reminder_worker(app: Application) -> None:
                     if not due or not chat_id or due > current:
                         continue
                     await app.bot.send_message(chat_id=int(chat_id), text=f"Hatırlatma\n\nID {row_id_text(row)} - {row.get('Metin', '-')}")
-                    if str(row.get("Tekrar", "")).strip().casefold() in {"günlük", "gunluk", "her gün", "hergun", "daily"}:
+                    repeat = str(row.get("Tekrar", "")).strip().casefold()
+                    if repeat in {"günlük", "gunluk", "her gün", "hergun", "daily"}:
                         next_due = due
                         while next_due <= current:
                             next_due += timedelta(days=1)
+                        set_cell_by_header("reminders", int(row["_row"]), "Tarih", next_due.strftime(DATE_FMT))
+                        set_cell_by_header("reminders", int(row["_row"]), "Durum", "bekliyor")
+                    elif repeat in {"haftalık", "haftalik", "weekly"}:
+                        next_due = due
+                        while next_due <= current:
+                            next_due += timedelta(days=7)
+                        set_cell_by_header("reminders", int(row["_row"]), "Tarih", next_due.strftime(DATE_FMT))
+                        set_cell_by_header("reminders", int(row["_row"]), "Durum", "bekliyor")
+                    elif repeat in {"aylık", "aylik", "monthly"}:
+                        try:
+                            monthday = int(row.get("Ay_Gunu") or due.day)
+                        except Exception:
+                            monthday = due.day
+                        next_due = next_monthly_after(due, monthday, current)
                         set_cell_by_header("reminders", int(row["_row"]), "Tarih", next_due.strftime(DATE_FMT))
                         set_cell_by_header("reminders", int(row["_row"]), "Durum", "bekliyor")
                     else:
@@ -1335,6 +1563,42 @@ async def ask_ai(question: str, user_id: int, context: ContextTypes.DEFAULT_TYPE
         return answer
     except Exception as exc:
         return f"Agnes AI hatası: {exc}"
+
+
+async def analyze_image_with_gemini(image_bytes: bytes, note: str) -> str:
+    if not GEMINI_API_KEY:
+        return "Gemini API anahtarı eksik. Railway Variables içine GEMINI_API_KEY eklenince fotoğraf yorumlama çalışır."
+    prompt = (
+        "Bu fotoğrafı bahçecilik ve bitki bakımı açısından Türkçe yorumla. "
+        "Kısa, pratik ve temkinli ol. Hastalık/zararlı belirtisi varsa olasılık olarak yaz, kesin teşhis gibi konuşma. "
+        "Gözlem notu: "
+        f"{note or '-'}"
+    )
+    payload = {
+        "contents": [{
+            "parts": [
+                {"text": prompt},
+                {
+                    "inline_data": {
+                        "mime_type": "image/jpeg",
+                        "data": base64.b64encode(image_bytes).decode("ascii"),
+                    }
+                },
+            ]
+        }]
+    }
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
+    try:
+        response = await asyncio.to_thread(
+            lambda: requests.post(url, params={"key": GEMINI_API_KEY}, json=payload, timeout=45)
+        )
+        response.raise_for_status()
+        data = response.json()
+        parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+        text = "\n".join(str(part.get("text", "")).strip() for part in parts if part.get("text")).strip()
+        return text or "Gemini fotoğrafı yorumladı ama metin döndürmedi."
+    except Exception as exc:
+        return f"Gemini fotoğraf yorumlama hatası: {exc}"
 
 
 def translate_weather(text: str) -> str:
@@ -1792,14 +2056,40 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             "Durum": "bekliyor",
             "Chat_ID": update.effective_chat.id,
             "Tekrar": d.get("repeat", "tek"),
+            "Hafta_Gunu": d.get("weekday", ""),
+            "Ay_Gunu": d.get("monthday", ""),
             "CreatedAt": now().isoformat(timespec="seconds"),
         })
         context.user_data.clear()
-        tekrar = "Her gün" if d.get("repeat") == "günlük" else "Tek seferlik"
+        tekrar = repeat_label(d.get("repeat", "tek"))
         await update.effective_message.reply_text(f"Hatırlatma eklendi. ID {item_id} - {d['date']} {d['time']} ({tekrar})", reply_markup=reminder_menu())
         return
     if flow == "rem_delete":
         await delete_by_id(update, "reminders", text, "Hatırlatma silindi.", reminder_menu())
+        context.user_data.clear()
+        return
+
+    if flow == "obs_note":
+        context.user_data.setdefault("draft", {})["note"] = "" if text == "-" else text
+        context.user_data["flow"] = "obs_photo"
+        await update.effective_message.reply_text("Şimdi fotoğrafı gönder.", reply_markup=back_cancel("m:observation"))
+        return
+    if flow == "obs_date":
+        date = parse_date(text)
+        if not date:
+            await update.effective_message.reply_text("Tarih anlaşılamadı. Örn: 14-06-2026", reply_markup=back_cancel("m:observation"))
+            return
+        rows = [r for r in records("observations") if parse_date(str(r.get("Tarih", ""))) == date]
+        if not rows:
+            await update.effective_message.reply_text(f"{date} tarihinde gözlem kaydı yok.", reply_markup=observation_menu())
+            return
+        out = f"{date} Gözlemleri\n\n"
+        for row in rows[::-1]:
+            out += observation_row_text(row) + "\n\n"
+        await send_chunks(update, out, observation_menu())
+        return
+    if flow == "obs_delete":
+        await delete_by_id(update, "observations", text, "Gözlem silindi.", observation_menu())
         context.user_data.clear()
         return
 
@@ -1811,6 +2101,49 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         context.user_data.clear()
         await show_weather(update, text, monthly=True)
         return
+
+
+async def photo_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    flow = context.user_data.get("flow")
+    message = update.effective_message
+    if not message or not message.photo:
+        return
+    if flow != "obs_photo":
+        await message.reply_text("Fotoğrafı kaydetmek veya yorumlatmak için önce Gözlem menüsünden bir seçenek seç.", reply_markup=observation_menu())
+        return
+
+    d = context.user_data.get("draft", {})
+    photo = message.photo[-1]
+    file_id = photo.file_id
+    ai_comment = ""
+
+    if d.get("ai"):
+        await message.chat.send_action(ChatAction.TYPING)
+        try:
+            tg_file = await context.bot.get_file(file_id)
+            image_bytes = bytes(await tg_file.download_as_bytearray())
+            ai_comment = await analyze_image_with_gemini(image_bytes, d.get("note", ""))
+        except Exception as exc:
+            ai_comment = f"Fotoğraf indirilemedi veya yorumlanamadı: {exc}"
+
+    item_id = next_id("observations")
+    append_record("observations", OBSERVATION_HEADERS, {
+        "ID": item_id,
+        "Tarih": today_str(),
+        "Kategori": d.get("category", "Gözlem"),
+        "Not": d.get("note", ""),
+        "Foto_File_ID": file_id,
+        "AI_Yorum": ai_comment,
+        "CreatedAt": now().isoformat(timespec="seconds"),
+    })
+    context.user_data.clear()
+
+    text = f"Gözlem kaydedildi. ID {item_id}"
+    if ai_comment:
+        text += f"\n\nAI Yorumu:\n{ai_comment}"
+    parts = chunks(text)
+    for i, part in enumerate(parts):
+        await message.reply_text(part, reply_markup=observation_menu() if i == len(parts) - 1 else None)
 
 
 async def delete_by_id(update: Update, sheet_name: str, id_text: str, success: str, menu: InlineKeyboardMarkup) -> None:
@@ -1922,6 +2255,7 @@ def build_app() -> Application:
     app.add_handler(CommandHandler(["start", "menu"], start))
     app.add_handler(CommandHandler("iptal", cancel))
     app.add_handler(CallbackQueryHandler(handle_callback))
+    app.add_handler(MessageHandler(filters.PHOTO, photo_message))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_message))
     app.add_error_handler(error_handler)
     return app
