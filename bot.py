@@ -42,7 +42,7 @@ AGNES_API_KEY = os.getenv("AGNES_API_KEY", "").strip()
 AGNES_BASE_URL = os.getenv("AGNES_BASE_URL", "https://apihub.agnes-ai.com/v1").strip()
 AGNES_MODEL = os.getenv("AGNES_MODEL", "agnes-2.0-flash").strip()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash").strip()
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip()
 PORT = int(os.getenv("PORT", "10000"))
 
 INVENTORY_HEADERS = ["ID", "Kategori", "Malzeme / Alet", "Başlangıç Miktarı", "Kullanılan", "Kalan Miktar", "Birim", "Görevi / Not", "CreatedAt"]
@@ -64,15 +64,25 @@ AI_CLIENT = None
 
 
 class HealthHandler(BaseHTTPRequestHandler):
+    def send_health(self) -> None:
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.end_headers()
+
     def do_GET(self) -> None:
         if self.path not in ("/", "/health"):
             self.send_response(404)
             self.end_headers()
             return
-        self.send_response(200)
-        self.send_header("Content-Type", "text/plain; charset=utf-8")
-        self.end_headers()
+        self.send_health()
         self.wfile.write(b"Yasemin bot calisiyor")
+
+    def do_HEAD(self) -> None:
+        if self.path not in ("/", "/health"):
+            self.send_response(404)
+            self.end_headers()
+            return
+        self.send_health()
 
     def log_message(self, format: str, *args: Any) -> None:
         return
@@ -2461,6 +2471,8 @@ async def ask_ai(question: str, user_id: int, context: ContextTypes.DEFAULT_TYPE
 async def ask_gemini(question: str, context: ContextTypes.DEFAULT_TYPE) -> str:
     if not GEMINI_API_KEY:
         return "Gemini API anahtarı eksik. Railway Variables içine GEMINI_API_KEY eklenmeli."
+    if not GEMINI_API_KEY.startswith("AIza"):
+        return "Gemini API anahtarı yanlış görünüyor. Google AI Studio'dan alınan key genelde AIza ile başlar. GEMINI_API_KEY alanına Agnes/OpenAI key'i değil Gemini key'i yazılmalı."
     history = context.user_data.setdefault("gemini_history", [])
     parts = [{"text": "Türkçe cevap veren, bahçecilik ve kayıt yönetiminde pratik öneriler sunan bir asistansın. Kısa, net ve uygulanabilir cevap ver."}]
     for item in history[-8:]:
@@ -2473,6 +2485,10 @@ async def ask_gemini(question: str, context: ContextTypes.DEFAULT_TYPE) -> str:
         response = await asyncio.to_thread(
             lambda: requests.post(url, params={"key": GEMINI_API_KEY}, json=payload, timeout=45)
         )
+        if response.status_code == 403:
+            return "Gemini 403 hatası: API key yanlış olabilir, Google AI Studio'da Gemini API açık olmayabilir veya seçilen modele erişimin olmayabilir. GEMINI_API_KEY'i yeni Google AI Studio key'i ile değiştir ve GEMINI_MODEL=gemini-2.5-flash yap."
+        if response.status_code == 404:
+            return "Gemini model hatası: model bulunamadı. GEMINI_MODEL=gemini-2.5-flash yapıp tekrar dene."
         response.raise_for_status()
         data = response.json()
         response_parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
@@ -2489,6 +2505,8 @@ async def ask_gemini(question: str, context: ContextTypes.DEFAULT_TYPE) -> str:
 async def analyze_image_with_gemini(image_bytes: bytes, note: str) -> str:
     if not GEMINI_API_KEY:
         return "Gemini API anahtarı eksik. Railway Variables içine GEMINI_API_KEY eklenince fotoğraf yorumlama çalışır."
+    if not GEMINI_API_KEY.startswith("AIza"):
+        return "Gemini API anahtarı yanlış görünüyor. Google AI Studio'dan alınan key genelde AIza ile başlar."
     prompt = (
         "Bu fotoğrafı bahçecilik ve bitki bakımı açısından Türkçe yorumla. "
         "Kısa, pratik ve temkinli ol. Hastalık/zararlı belirtisi varsa olasılık olarak yaz, kesin teşhis gibi konuşma. "
@@ -2513,6 +2531,10 @@ async def analyze_image_with_gemini(image_bytes: bytes, note: str) -> str:
         response = await asyncio.to_thread(
             lambda: requests.post(url, params={"key": GEMINI_API_KEY}, json=payload, timeout=45)
         )
+        if response.status_code == 403:
+            return "Gemini 403 hatası: API key yanlış olabilir, Gemini API açık olmayabilir veya seçilen modele erişimin olmayabilir. GEMINI_MODEL=gemini-2.5-flash yapıp yeni Google AI Studio key'i gir."
+        if response.status_code == 404:
+            return "Gemini model hatası: model bulunamadı. GEMINI_MODEL=gemini-2.5-flash yapıp tekrar dene."
         response.raise_for_status()
         data = response.json()
         parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
