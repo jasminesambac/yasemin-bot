@@ -43,6 +43,13 @@ AGNES_BASE_URL = os.getenv("AGNES_BASE_URL", "https://apihub.agnes-ai.com/v1").s
 AGNES_MODEL = os.getenv("AGNES_MODEL", "agnes-2.0-flash").strip()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip()
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
+GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile").strip()
+GROQ_WHISPER_MODEL = os.getenv("GROQ_WHISPER_MODEL", "whisper-large-v3").strip()
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "").strip()
+PINECONE_API_KEY = os.getenv("PINECONE_API_KEY", "").strip()
+PINECONE_HOST = os.getenv("PINECONE_HOST", "").strip()
+LLAMA_CLOUD_API_KEY = os.getenv("LLAMA_CLOUD_API_KEY", "").strip()
 PORT = int(os.getenv("PORT", "10000"))
 
 INVENTORY_HEADERS = ["ID", "Kategori", "Malzeme / Alet", "Başlangıç Miktarı", "Kullanılan", "Kalan Miktar", "Birim", "Görevi / Not", "CreatedAt"]
@@ -58,9 +65,11 @@ ISSUE_HEADERS = ["ID", "Tarih", "Alan", "Baslik", "Not", "Durum", "CreatedAt", "
 DIARY_HEADERS = ["ID", "Tarih", "Not", "CreatedAt"]
 ESSENCE_HEADERS = ["ID", "Baslangic", "Cicek", "Yag", "Kap", "Gun", "Not", "Durum", "CreatedAt", "ClosedAt"]
 ALERT_HEADERS = ["Key", "Value", "UpdatedAt"]
+AI_DOC_HEADERS = ["ID", "Tarih", "Dosya", "Ozet", "Metin", "Pinecone", "CreatedAt"]
 
 SHEET: dict[str, gspread.Worksheet] = {}
 AI_CLIENT = None
+GROQ_CLIENT = None
 
 
 class HealthHandler(BaseHTTPRequestHandler):
@@ -436,7 +445,9 @@ def observation_menu() -> InlineKeyboardMarkup:
 def ai_menu() -> InlineKeyboardMarkup:
     return kb([
         [("Agnes AI", "ai:agnes"), ("Gemini", "ai:gemini")],
-        [("İkisine de Sor", "ai:both")],
+        [("Groq Hızlı", "ai:groq"), ("Güncel Ara", "ai:web")],
+        [("İkisine de Sor", "ai:both"), ("Sesli Sor", "ai:voice")],
+        [("Dosya Oku", "ai:file"), ("Dosyaya Sor", "ai:docq")],
         [("AI Hafızayı Temizle", "ai:clear")],
         [("🔙 Geri", "m:main")],
     ])
@@ -636,6 +647,7 @@ def init_sheets() -> None:
         "diary": DIARY_HEADERS,
         "essences": ESSENCE_HEADERS,
         "alerts": ALERT_HEADERS,
+        "ai_docs": AI_DOC_HEADERS,
     }
 
     try:
@@ -677,9 +689,11 @@ def init_sheets() -> None:
 
 
 def init_ai() -> None:
-    global AI_CLIENT
+    global AI_CLIENT, GROQ_CLIENT
     if AGNES_API_KEY and OpenAI:
         AI_CLIENT = OpenAI(base_url=AGNES_BASE_URL, api_key=AGNES_API_KEY)
+    if GROQ_API_KEY and OpenAI:
+        GROQ_CLIENT = OpenAI(base_url="https://api.groq.com/openai/v1", api_key=GROQ_API_KEY)
 
 
 def records(sheet_name: str) -> list[dict[str, Any]]:
@@ -1166,6 +1180,26 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if data == "ai:gemini":
         context.user_data["flow"] = "ai_gemini"
         await edit_or_send(update, "Gemini'ye sormak istediğin şeyi yaz.", back_cancel("m:ai"))
+        return
+    if data == "ai:groq":
+        context.user_data["flow"] = "ai_groq"
+        await edit_or_send(update, "Groq hızlı modele sormak istediğin şeyi yaz.", back_cancel("m:ai"))
+        return
+    if data == "ai:web":
+        context.user_data["flow"] = "ai_web"
+        await edit_or_send(update, "Güncel arama yapmak istediğin konuyu yaz.", back_cancel("m:ai"))
+        return
+    if data == "ai:voice":
+        context.user_data["flow"] = "ai_voice"
+        await edit_or_send(update, "Sesli mesaj gönder. Groq Whisper metne çevirecek, ardından AI cevaplayacak.", back_cancel("m:ai"))
+        return
+    if data == "ai:file":
+        context.user_data["flow"] = "ai_file"
+        await edit_or_send(update, "PDF/TXT/MD/CSV dosyası gönder. Özetleyip hafızaya kaydedeceğim.", back_cancel("m:ai"))
+        return
+    if data == "ai:docq":
+        context.user_data["flow"] = "ai_docq"
+        await edit_or_send(update, "Kaydedilmiş dosyalarla ilgili sorunu yaz.", back_cancel("m:ai"))
         return
     if data == "ai:both":
         context.user_data["flow"] = "ai_both"
@@ -2468,6 +2502,110 @@ async def ask_ai(question: str, user_id: int, context: ContextTypes.DEFAULT_TYPE
         return f"Agnes AI hatası: {exc}"
 
 
+async def ask_groq(question: str, context: ContextTypes.DEFAULT_TYPE) -> str:
+    if not GROQ_CLIENT:
+        return "Groq ayarı eksik. Render Variables içine GROQ_API_KEY eklenmeli."
+    history = context.user_data.setdefault("groq_history", [])
+    messages = [{"role": "system", "content": "Türkçe cevap veren, hızlı ve pratik bir bahçecilik asistanısın. Kısa, net ve uygulanabilir cevap ver."}]
+    messages.extend(history[-8:])
+    messages.append({"role": "user", "content": question})
+    try:
+        response = await asyncio.to_thread(
+            GROQ_CLIENT.chat.completions.create,
+            model=GROQ_MODEL,
+            messages=messages,
+            max_tokens=1200,
+        )
+        answer = response.choices[0].message.content or "Groq cevap döndürmedi."
+        history.extend([{"role": "user", "content": question}, {"role": "assistant", "content": answer}])
+        context.user_data["groq_history"] = history[-12:]
+        return answer
+    except Exception as exc:
+        return f"Groq hatası: {exc}"
+
+
+async def ask_web_search(question: str, context: ContextTypes.DEFAULT_TYPE) -> str:
+    if not TAVILY_API_KEY:
+        return "Tavily ayarı eksik. Render Variables içine TAVILY_API_KEY eklenmeli."
+    try:
+        response = await asyncio.to_thread(
+            lambda: requests.post(
+                "https://api.tavily.com/search",
+                json={"api_key": TAVILY_API_KEY, "query": question, "search_depth": "advanced", "max_results": 5, "include_answer": True},
+                timeout=45,
+            )
+        )
+        response.raise_for_status()
+        data = response.json()
+        items = []
+        if data.get("answer"):
+            items.append(f"Ön cevap: {data['answer']}")
+        for result in data.get("results", [])[:5]:
+            items.append(f"- {result.get('title','Kaynak')}: {result.get('content','')} ({result.get('url','')})")
+        clean = "\n".join(items) or "Arama sonucu bulunamadı."
+        prompt = f"Bu güncel arama sonuçlarını Türkçe, düzenli ve kısa özetle. En sonda kaynak linklerini koru.\n\nSoru: {question}\n\nSonuçlar:\n{clean}"
+        if GEMINI_API_KEY:
+            return await ask_gemini(prompt, context)
+        return await ask_groq(prompt, context)
+    except Exception as exc:
+        return f"Tavily arama hatası: {exc}"
+
+
+def extract_document_text(filename: str, data: bytes) -> str:
+    lower = filename.lower()
+    if lower.endswith(".pdf"):
+        try:
+            from pypdf import PdfReader
+            reader = PdfReader(io.BytesIO(data))
+            return "\n".join(page.extract_text() or "" for page in reader.pages).strip()
+        except Exception as exc:
+            return f"PDF okunamadı: {exc}"
+    try:
+        return data.decode("utf-8", errors="ignore").strip()
+    except Exception as exc:
+        return f"Dosya okunamadı: {exc}"
+
+
+async def pinecone_store_doc(doc_id: int, filename: str, text: str) -> str:
+    if not (PINECONE_API_KEY and PINECONE_HOST and GEMINI_API_KEY):
+        return "kapalı"
+    try:
+        emb = await asyncio.to_thread(
+            lambda: requests.post(
+                "https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent",
+                params={"key": GEMINI_API_KEY},
+                json={"content": {"parts": [{"text": text[:8000]}]}},
+                timeout=45,
+            )
+        )
+        emb.raise_for_status()
+        values = emb.json()["embedding"]["values"]
+        up = await asyncio.to_thread(
+            lambda: requests.post(
+                f"{PINECONE_HOST.rstrip('/')}/vectors/upsert",
+                headers={"Api-Key": PINECONE_API_KEY, "Content-Type": "application/json"},
+                json={"vectors": [{"id": f"doc-{doc_id}", "values": values, "metadata": {"filename": filename, "text": text[:3000]}}]},
+                timeout=45,
+            )
+        )
+        up.raise_for_status()
+        return "kaydedildi"
+    except Exception as exc:
+        log.warning("Pinecone kaydı olmadı: %s", exc)
+        return "hata"
+
+
+async def answer_from_docs(question: str, context: ContextTypes.DEFAULT_TYPE) -> str:
+    docs = records("ai_docs")[-8:]
+    if not docs:
+        return "Henüz AI dosya hafızasına kayıtlı doküman yok."
+    context_text = "\n\n".join(f"Dosya: {d.get('Dosya','-')}\nÖzet: {d.get('Ozet','')}\nMetin: {str(d.get('Metin',''))[:1500]}" for d in docs)
+    prompt = f"Kaydedilmiş dokümanlardan yararlanarak Türkçe cevap ver. Bilgi yoksa açıkça söyle.\n\nSoru: {question}\n\nDokümanlar:\n{context_text}"
+    if GEMINI_API_KEY:
+        return await ask_gemini(prompt, context)
+    return await ask_groq(prompt, context)
+
+
 async def ask_gemini(question: str, context: ContextTypes.DEFAULT_TYPE) -> str:
     if not GEMINI_API_KEY:
         return "Gemini API anahtarı eksik. Railway Variables içine GEMINI_API_KEY eklenmeli."
@@ -2614,6 +2752,27 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         for part in chunks(f"Gemini:\n\n{answer}"):
             await update.effective_message.reply_text(part)
         await update.effective_message.reply_text("Başka bir soru yazabilir veya geri dönebilirsin.", reply_markup=back_cancel("m:ai"))
+        return
+    if flow == "ai_groq":
+        await update.effective_message.chat.send_action(ChatAction.TYPING)
+        answer = await ask_groq(text, context)
+        for part in chunks(f"Groq:\n\n{answer}"):
+            await update.effective_message.reply_text(part)
+        await update.effective_message.reply_text("Başka bir soru yazabilir veya geri dönebilirsin.", reply_markup=back_cancel("m:ai"))
+        return
+    if flow == "ai_web":
+        await update.effective_message.chat.send_action(ChatAction.TYPING)
+        answer = await ask_web_search(text, context)
+        for part in chunks(f"Güncel Arama:\n\n{answer}"):
+            await update.effective_message.reply_text(part)
+        await update.effective_message.reply_text("Başka bir arama yazabilir veya geri dönebilirsin.", reply_markup=back_cancel("m:ai"))
+        return
+    if flow == "ai_docq":
+        await update.effective_message.chat.send_action(ChatAction.TYPING)
+        answer = await answer_from_docs(text, context)
+        for part in chunks(f"Dosya Hafızası:\n\n{answer}"):
+            await update.effective_message.reply_text(part)
+        await update.effective_message.reply_text("Başka bir dosya sorusu yazabilir veya geri dönebilirsin.", reply_markup=back_cancel("m:ai"))
         return
     if flow == "ai_both":
         await update.effective_message.chat.send_action(ChatAction.TYPING)
@@ -3425,6 +3584,78 @@ async def photo_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await message.reply_text(part, reply_markup=observation_menu() if i == len(parts) - 1 else None)
 
 
+async def voice_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    message = update.effective_message
+    if not message or context.user_data.get("flow") != "ai_voice":
+        return
+    if not GROQ_CLIENT:
+        await message.reply_text("Groq ayarı eksik. Render Variables içine GROQ_API_KEY eklenmeli.", reply_markup=ai_menu())
+        return
+    media = message.voice or message.audio
+    if not media:
+        return
+    await message.chat.send_action(ChatAction.TYPING)
+    try:
+        tg_file = await media.get_file()
+        buf = io.BytesIO()
+        await tg_file.download_to_memory(buf)
+        buf.seek(0)
+        buf.name = "telegram_voice.ogg"
+        transcript = await asyncio.to_thread(
+            GROQ_CLIENT.audio.transcriptions.create,
+            model=GROQ_WHISPER_MODEL,
+            file=buf,
+            language="tr",
+        )
+        text = getattr(transcript, "text", "").strip()
+        if not text:
+            await message.reply_text("Ses metne çevrilemedi.", reply_markup=back_cancel("m:ai"))
+            return
+        answer = await ask_gemini(text, context) if GEMINI_API_KEY else await ask_groq(text, context)
+        for part in chunks(f"Ses metni:\n{text}\n\nCevap:\n{answer}"):
+            await message.reply_text(part)
+        await message.reply_text("Başka ses gönderebilir veya geri dönebilirsin.", reply_markup=back_cancel("m:ai"))
+    except Exception as exc:
+        await message.reply_text(f"Ses işleme hatası: {exc}", reply_markup=back_cancel("m:ai"))
+
+
+async def document_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    message = update.effective_message
+    if not message or context.user_data.get("flow") != "ai_file":
+        return
+    doc = message.document
+    if not doc:
+        return
+    filename = doc.file_name or "dosya"
+    await message.chat.send_action(ChatAction.TYPING)
+    try:
+        tg_file = await doc.get_file()
+        buf = io.BytesIO()
+        await tg_file.download_to_memory(buf)
+        text = extract_document_text(filename, buf.getvalue())
+        if not text or text.startswith(("PDF okunamadı", "Dosya okunamadı")):
+            await message.reply_text(text or "Dosya boş görünüyor.", reply_markup=back_cancel("m:ai"))
+            return
+        summary_prompt = f"Bu dokümanı Türkçe, kısa ve kullanışlı şekilde özetle. Önemli maddeleri çıkar.\n\nDosya: {filename}\n\nMetin:\n{text[:12000]}"
+        summary = await ask_gemini(summary_prompt, context) if GEMINI_API_KEY else await ask_groq(summary_prompt, context)
+        item_id = next_id("ai_docs")
+        pinecone_status = await pinecone_store_doc(item_id, filename, text)
+        append_record("ai_docs", AI_DOC_HEADERS, {
+            "ID": item_id,
+            "Tarih": today_str(),
+            "Dosya": filename,
+            "Ozet": summary[:4000],
+            "Metin": text[:45000],
+            "Pinecone": pinecone_status,
+            "CreatedAt": now().isoformat(timespec="seconds"),
+        })
+        for part in chunks(f"Dosya kaydedildi. ID {item_id}\nPinecone: {pinecone_status}\n\nÖzet:\n{summary}"):
+            await message.reply_text(part)
+        await message.reply_text("Bu dosyayla ilgili soru sormak için Dosyaya Sor'u kullan.", reply_markup=ai_menu())
+    except Exception as exc:
+        await message.reply_text(f"Dosya işleme hatası: {exc}", reply_markup=back_cancel("m:ai"))
+
+
 async def delete_by_id(update: Update, sheet_name: str, id_text: str, success: str, menu: InlineKeyboardMarkup) -> None:
     wanted = id_text.strip()
     for row in records(sheet_name):
@@ -3570,6 +3801,8 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("iptal", cancel))
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.PHOTO, photo_message))
+    app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, voice_message))
+    app.add_handler(MessageHandler(filters.Document.ALL, document_message))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_message))
     app.add_error_handler(error_handler)
     return app
