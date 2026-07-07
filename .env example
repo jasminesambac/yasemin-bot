@@ -13,3 +13,5 @@ TAVILY_API_KEY=tavily_api_key_optional
 PINECONE_API_KEY=pinecone_api_key_optional
 PINECONE_HOST=https://your-index-host.svc.region.pinecone.io
 LLAMA_CLOUD_API_KEY=llama_cloud_api_key_optional
+PERENUAL_API_KEY=perenual_api_key_optional
+PERENUAL_IDENTIFY_API_KEY=perenual_identify_api_key_optional
