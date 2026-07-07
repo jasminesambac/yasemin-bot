@@ -2,6 +2,7 @@ import asyncio
 import base64
 import calendar
 import csv
+import concurrent.futures
 import io
 import json
 import logging
@@ -12,6 +13,7 @@ import zipfile
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from time import monotonic
 from typing import Any
 
 import gspread
@@ -77,6 +79,8 @@ AI_LOG_HEADERS = ["ID", "Tarih", "Saat", "Kullanici", "Tur", "Girdi", "Cevap", "
 SHEET: dict[str, gspread.Worksheet] = {}
 AI_CLIENT = None
 GROQ_CLIENT = None
+RECORD_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
+AI_LOG_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=1)
 
 
 class HealthHandler(BaseHTTPRequestHandler):
@@ -735,6 +739,9 @@ def init_ai() -> None:
 
 
 def records(sheet_name: str) -> list[dict[str, Any]]:
+    cached = RECORD_CACHE.get(sheet_name)
+    if cached and monotonic() - cached[0] < 2:
+        return [dict(row) for row in cached[1]]
     data = SHEET[sheet_name].get_all_records()
     for i, row in enumerate(data, start=2):
         row["_row"] = i
@@ -742,6 +749,7 @@ def records(sheet_name: str) -> list[dict[str, Any]]:
             row["_id"] = str(i - 1)
         else:
             row["_id"] = str(row.get("ID"))
+    RECORD_CACHE[sheet_name] = (monotonic(), [dict(row) for row in data])
     return data
 
 
@@ -766,9 +774,10 @@ def append_record(sheet_name: str, headers: list[str], values: dict[str, Any]) -
             current_headers.append(header)
     row = [values.get(h, "") for h in current_headers]
     SHEET[sheet_name].append_row(row, value_input_option="USER_ENTERED")
+    RECORD_CACHE.pop(sheet_name, None)
 
 
-def log_ai(sheet_name: str, user_id: int | str, kind: str, prompt: str, answer: str, extra: str = "") -> int:
+def write_ai_log(sheet_name: str, user_id: int | str, kind: str, prompt: str, answer: str, extra: str = "") -> int:
     item_id = next_id(sheet_name)
     append_record(sheet_name, AI_LOG_HEADERS, {
         "ID": item_id,
@@ -782,6 +791,17 @@ def log_ai(sheet_name: str, user_id: int | str, kind: str, prompt: str, answer: 
         "CreatedAt": now().isoformat(timespec="seconds"),
     })
     return item_id
+
+
+def log_ai(sheet_name: str, user_id: int | str, kind: str, prompt: str, answer: str, extra: str = "") -> int:
+    def job() -> None:
+        try:
+            write_ai_log(sheet_name, user_id, kind, str(prompt), str(answer), str(extra))
+        except Exception:
+            log.exception("AI kaydı yazılamadı")
+
+    AI_LOG_EXECUTOR.submit(job)
+    return 0
 
 
 async def show_ai_logs(update: Update, sheet_name: str) -> None:
@@ -850,6 +870,7 @@ def set_cell_by_header(sheet_name: str, row_number: int, header: str, value: Any
         header_row.append(header)
     col = header_row.index(header) + 1
     SHEET[sheet_name].update_cell(row_number, col, value)
+    RECORD_CACHE.pop(sheet_name, None)
 
 
 def alert_value(key: str) -> str:
@@ -1479,6 +1500,7 @@ async def handle_stock_flow_callback(update: Update, context: ContextTypes.DEFAU
             await edit_or_send(update, "Silinecek malzeme bulunamadı.", stock_menu())
             return
         SHEET["inventory"].delete_rows(int(row_num))
+        RECORD_CACHE.pop("inventory", None)
         add_history("ENVANTERDEN SİLİNDİ", item.get("Malzeme / Alet", ""), "", item.get("Birim", ""), "", "Malzeme silindi")
         context.user_data.pop("delete_row", None)
         await edit_or_send(update, "Malzeme silindi.", stock_menu())
@@ -1587,6 +1609,7 @@ async def delete_last_ph_for_teneke(update: Update, teneke: str) -> None:
         return
     row = rows[-1]
     SHEET["ph_records"].delete_rows(int(row["_row"]))
+    RECORD_CACHE.pop("ph_records", None)
     await edit_or_send(update, f"Silindi: Teneke {teneke}, ID {row_id_text(row)}, pH {row.get('pH', '-')}", ph_menu())
 
 
@@ -2571,7 +2594,7 @@ async def reminder_worker(app: Application) -> None:
                     log.exception("Hatırlatma satırı işlenemedi: ID %s", row_id_text(row))
         except Exception:
             log.exception("Hatırlatma kontrolünde hata")
-        await asyncio.sleep(15)
+        await asyncio.sleep(30)
 
 
 async def stock_alert_worker(app: Application) -> None:
@@ -3940,6 +3963,7 @@ async def delete_by_id(update: Update, sheet_name: str, id_text: str, success: s
     for row in records(sheet_name):
         if row_id_text(row) == wanted:
             SHEET[sheet_name].delete_rows(int(row["_row"]))
+            RECORD_CACHE.pop(sheet_name, None)
             await update.effective_message.reply_text(success, reply_markup=menu)
             return
     await update.effective_message.reply_text("Bu ID bulunamadı.", reply_markup=menu)
@@ -4089,4 +4113,4 @@ def build_app() -> Application:
 
 if __name__ == "__main__":
     start_health_server()
-    build_app().run_polling(allowed_updates=Update.ALL_TYPES)
+    build_app().run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
