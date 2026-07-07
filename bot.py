@@ -270,9 +270,12 @@ async def edit_or_send(update: Update, text: str, reply_markup: InlineKeyboardMa
         except BadRequest as exc:
             if "Message is not modified" in str(exc):
                 return
-            if "message to edit not found" not in str(exc).lower():
+            if "message to edit not found" not in str(exc).lower() and "message can't be edited" not in str(exc).lower():
                 log.warning("edit failed: %s", exc)
-        await query.message.reply_text(text, reply_markup=reply_markup)
+        try:
+            await query.message.reply_text(text, reply_markup=reply_markup)
+        except Exception:
+            log.exception("reply_text failed")
         return
     await send_chunks(update, text, reply_markup)
 
