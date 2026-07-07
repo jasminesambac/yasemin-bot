@@ -48,6 +48,8 @@ GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip()
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
 GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile").strip()
 GROQ_WHISPER_MODEL = os.getenv("GROQ_WHISPER_MODEL", "whisper-large-v3").strip()
+if GROQ_WHISPER_MODEL == "hisper-large-v3":
+    GROQ_WHISPER_MODEL = "whisper-large-v3"
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "").strip()
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY", "").strip()
 PINECONE_HOST = os.getenv("PINECONE_HOST", "").strip()
@@ -291,6 +293,7 @@ def main_menu() -> InlineKeyboardMarkup:
 
 def records_group_menu() -> InlineKeyboardMarkup:
     return kb([
+        [("📦 Stok", "m:stock"), ("📌 Sorun", "m:issues")],
         [("📜 Geçmiş", "m:history"), ("🔬 pH", "m:ph")],
         [("📔 Günlük", "m:diary"), ("📸 Gözlem", "m:observation")],
         [("📊 Rapor", "m:report")],
@@ -300,8 +303,7 @@ def records_group_menu() -> InlineKeyboardMarkup:
 
 def garden_group_menu() -> InlineKeyboardMarkup:
     return kb([
-        [("📦 Stok", "m:stock"), ("🌱 Alanlar", "m:areas")],
-        [("🗓️ Plan", "m:plan"), ("📌 Sorun", "m:issues")],
+        [("🌱 Alanlar", "m:areas"), ("🗓️ Plan", "m:plan")],
         [("⏰ Hatırlatma", "m:reminder"), ("🌤️ Hava", "m:weather")],
         [("🔙 Geri", "m:main")],
     ])
@@ -1210,6 +1212,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if data == "ai:clear":
         context.user_data.pop("ai_history", None)
         context.user_data.pop("gemini_history", None)
+        context.user_data.pop("groq_history", None)
         await edit_or_send(update, "AI konuşma hafızası temizlendi.", ai_menu())
         return
 
@@ -2760,14 +2763,16 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         answer = await ask_groq(text, context)
         for part in chunks(f"Groq:\n\n{answer}"):
             await update.effective_message.reply_text(part)
-        await update.effective_message.reply_text("Başka bir soru yazabilir veya geri dönebilirsin.", reply_markup=back_cancel("m:ai"))
+        context.user_data["flow"] = "ai_groq"
+        await update.effective_message.reply_text("Başka bir soru yazabilir veya AI menüsüne dönebilirsin.", reply_markup=back_cancel("m:ai"))
         return
     if flow == "ai_web":
         await update.effective_message.chat.send_action(ChatAction.TYPING)
         answer = await ask_web_search(text, context)
         for part in chunks(f"Güncel Arama:\n\n{answer}"):
             await update.effective_message.reply_text(part)
-        await update.effective_message.reply_text("Başka bir arama yazabilir veya geri dönebilirsin.", reply_markup=back_cancel("m:ai"))
+        context.user_data["flow"] = "ai_web"
+        await update.effective_message.reply_text("Başka bir arama yazabilir veya AI menüsüne dönebilirsin.", reply_markup=back_cancel("m:ai"))
         return
     if flow == "ai_docq":
         await update.effective_message.chat.send_action(ChatAction.TYPING)
