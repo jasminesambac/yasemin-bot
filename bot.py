@@ -70,6 +70,7 @@ DIARY_HEADERS = ["ID", "Tarih", "Not", "CreatedAt"]
 ESSENCE_HEADERS = ["ID", "Baslangic", "Cicek", "Yag", "Kap", "Gun", "Not", "Durum", "CreatedAt", "ClosedAt"]
 ALERT_HEADERS = ["Key", "Value", "UpdatedAt"]
 AI_DOC_HEADERS = ["ID", "Tarih", "Dosya", "Ozet", "Metin", "Pinecone", "CreatedAt"]
+AI_LOG_HEADERS = ["ID", "Tarih", "Saat", "Kullanici", "Tur", "Girdi", "Cevap", "Ek", "CreatedAt"]
 
 SHEET: dict[str, gspread.Worksheet] = {}
 AI_CLIENT = None
@@ -388,6 +389,7 @@ def area_menu() -> InlineKeyboardMarkup:
 def recipe_menu() -> InlineKeyboardMarkup:
     return kb([
         [("📋 Reçete Listesi", "recipe:list"), ("➕ Reçete Ekle", "recipe:add")],
+        [("🤖 AI Reçete Oluştur", "recipe:ai")],
         [("▶️ Reçete Uygula", "recipe:apply"), ("❌ Reçete Sil", "recipe:delete")],
         [("🔙 Geri", "m:main")],
     ])
@@ -452,8 +454,19 @@ def ai_menu() -> InlineKeyboardMarkup:
         [("Groq Hızlı", "ai:groq"), ("Güncel Ara", "ai:web")],
         [("İkisine de Sor", "ai:both"), ("Sesli Sor", "ai:voice")],
         [("Dosya Oku", "ai:file"), ("Dosyaya Sor", "ai:docq")],
+        [("AI Kayıtlar", "ai:logs")],
         [("AI Hafızayı Temizle", "ai:clear")],
         [("🔙 Geri", "m:main")],
+    ])
+
+
+def ai_logs_menu() -> InlineKeyboardMarkup:
+    return kb([
+        [("Agnes", "ailog:list:ai_agnes_logs"), ("Gemini", "ailog:list:ai_gemini_logs")],
+        [("Groq", "ailog:list:ai_groq_logs"), ("Arama", "ailog:list:ai_web_logs")],
+        [("Ses", "ailog:list:ai_voice_logs"), ("Dosya", "ailog:list:ai_file_logs")],
+        [("Görsel", "ailog:list:ai_image_logs"), ("Sil", "ailog:delete")],
+        [("🔙 Geri", "m:ai")],
     ])
 
 
@@ -652,6 +665,13 @@ def init_sheets() -> None:
         "essences": ESSENCE_HEADERS,
         "alerts": ALERT_HEADERS,
         "ai_docs": AI_DOC_HEADERS,
+        "ai_agnes_logs": AI_LOG_HEADERS,
+        "ai_gemini_logs": AI_LOG_HEADERS,
+        "ai_groq_logs": AI_LOG_HEADERS,
+        "ai_web_logs": AI_LOG_HEADERS,
+        "ai_voice_logs": AI_LOG_HEADERS,
+        "ai_file_logs": AI_LOG_HEADERS,
+        "ai_image_logs": AI_LOG_HEADERS,
     }
 
     try:
@@ -732,6 +752,45 @@ def append_record(sheet_name: str, headers: list[str], values: dict[str, Any]) -
             current_headers.append(header)
     row = [values.get(h, "") for h in current_headers]
     SHEET[sheet_name].append_row(row, value_input_option="USER_ENTERED")
+
+
+def log_ai(sheet_name: str, user_id: int | str, kind: str, prompt: str, answer: str, extra: str = "") -> int:
+    item_id = next_id(sheet_name)
+    append_record(sheet_name, AI_LOG_HEADERS, {
+        "ID": item_id,
+        "Tarih": today_str(),
+        "Saat": now().strftime("%H:%M"),
+        "Kullanici": user_id,
+        "Tur": kind,
+        "Girdi": prompt[:45000],
+        "Cevap": answer[:45000],
+        "Ek": extra[:4000],
+        "CreatedAt": now().isoformat(timespec="seconds"),
+    })
+    return item_id
+
+
+async def show_ai_logs(update: Update, sheet_name: str) -> None:
+    labels = {"ai_agnes_logs": "Agnes", "ai_gemini_logs": "Gemini", "ai_groq_logs": "Groq", "ai_web_logs": "Güncel Arama", "ai_voice_logs": "Ses", "ai_file_logs": "Dosya", "ai_image_logs": "Görsel"}
+    rows = records(sheet_name)[-20:][::-1]
+    if not rows:
+        await edit_or_send(update, "Bu AI kaydında veri yok.", ai_logs_menu())
+        return
+    text = f"{labels.get(sheet_name, sheet_name)} AI Kayıtları\n\n"
+    for row in rows:
+        text += f"ID {row_id_text(row)} - {row.get('Tarih','-')} {row.get('Saat','')}\n"
+        text += f"Girdi: {str(row.get('Girdi',''))[:180]}\n"
+        text += f"Cevap: {str(row.get('Cevap',''))[:220]}\n\n"
+    await edit_or_send(update, text[:MSG_LIMIT], ai_logs_menu())
+
+
+async def handle_ai_log_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, data: str) -> None:
+    if data.startswith("ailog:list:"):
+        await show_ai_logs(update, data.split(":", 2)[2])
+        return
+    if data == "ailog:delete":
+        context.user_data["flow"] = "ailog_delete"
+        await edit_or_send(update, "Silmek için şu formatta yaz:\n\nsayfa ID\n\nÖrnek: groq 12\n\nSayfalar: agnes, gemini, groq, arama, ses, dosya, gorsel", back_cancel("ai:logs"))
 
 
 def find_inventory_by_row(row_number: int) -> dict[str, Any] | None:
@@ -1205,6 +1264,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         context.user_data["flow"] = "ai_docq"
         await edit_or_send(update, "Kaydedilmiş dosyalarla ilgili sorunu yaz.", back_cancel("m:ai"))
         return
+    if data == "ai:logs":
+        await edit_or_send(update, "AI kayıtları", ai_logs_menu())
+        return
     if data == "ai:both":
         context.user_data["flow"] = "ai_both"
         await edit_or_send(update, "Aynı soruyu Agnes ve Gemini'ye soracağım. Sorunu yaz.", back_cancel("m:ai"))
@@ -1245,6 +1307,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
     if data.startswith("recipe:") or data.startswith("recipeadd:"):
         await handle_recipe_callback(update, context, data)
+        return
+    if data.startswith("ailog:"):
+        await handle_ai_log_callback(update, context, data)
         return
     if data.startswith("issue:"):
         await handle_issue_callback(update, context, data)
@@ -1718,6 +1783,30 @@ async def handle_recipe_callback(update: Update, context: ContextTypes.DEFAULT_T
         context.user_data["flow"] = "recipeadd_name"
         context.user_data["draft"] = {"items": []}
         await edit_or_send(update, "Reçete adını yaz. Örn: Çelik Sisleme Karışımı", back_cancel("m:recipes"))
+        return
+    if data == "recipe:ai":
+        context.user_data["flow"] = "recipe_ai_prompt"
+        context.user_data["draft"] = {}
+        await edit_or_send(update, "Nasıl bir reçete istiyorsun? Örn: çelikler için hafif sisleme karışımı, orkide besin reçetesi...", back_cancel("m:recipes"))
+        return
+    if data == "recipe:ai_save":
+        d = context.user_data.get("draft", {})
+        if not d.get("ai_recipe"):
+            await edit_or_send(update, "Kaydedilecek AI reçete taslağı yok.", recipe_menu())
+            return
+        item_id = next_id("recipes")
+        append_record("recipes", RECIPE_HEADERS, {
+            "ID": item_id,
+            "Ad": d.get("ai_recipe_name", f"AI Reçete {today_str()}"),
+            "Islem": "AI Reçete",
+            "Malzeme_Miktar": "",
+            "pH": "",
+            "Not": d["ai_recipe"],
+            "Durum": "aktif",
+            "CreatedAt": now().isoformat(timespec="seconds"),
+        })
+        context.user_data.clear()
+        await edit_or_send(update, f"AI reçete kaydedildi. ID {item_id}", recipe_menu())
         return
     if data == "recipe:apply":
         context.user_data["flow"] = "recipe_apply"
@@ -2747,6 +2836,7 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if flow == "ai_agnes":
         await update.effective_message.chat.send_action(ChatAction.TYPING)
         answer = await ask_ai(text, update.effective_user.id, context)
+        log_ai("ai_agnes_logs", update.effective_user.id, "metin", text, answer)
         for part in chunks(f"Agnes AI:\n\n{answer}"):
             await update.effective_message.reply_text(part)
         await update.effective_message.reply_text("Başka bir soru yazabilir veya geri dönebilirsin.", reply_markup=back_cancel("m:ai"))
@@ -2754,6 +2844,7 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if flow == "ai_gemini":
         await update.effective_message.chat.send_action(ChatAction.TYPING)
         answer = await ask_gemini(text, context)
+        log_ai("ai_gemini_logs", update.effective_user.id, "metin", text, answer)
         for part in chunks(f"Gemini:\n\n{answer}"):
             await update.effective_message.reply_text(part)
         await update.effective_message.reply_text("Başka bir soru yazabilir veya geri dönebilirsin.", reply_markup=back_cancel("m:ai"))
@@ -2761,6 +2852,7 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if flow == "ai_groq":
         await update.effective_message.chat.send_action(ChatAction.TYPING)
         answer = await ask_groq(text, context)
+        log_ai("ai_groq_logs", update.effective_user.id, "metin", text, answer)
         for part in chunks(f"Groq:\n\n{answer}"):
             await update.effective_message.reply_text(part)
         context.user_data["flow"] = "ai_groq"
@@ -2769,6 +2861,7 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if flow == "ai_web":
         await update.effective_message.chat.send_action(ChatAction.TYPING)
         answer = await ask_web_search(text, context)
+        log_ai("ai_web_logs", update.effective_user.id, "arama", text, answer)
         for part in chunks(f"Güncel Arama:\n\n{answer}"):
             await update.effective_message.reply_text(part)
         context.user_data["flow"] = "ai_web"
@@ -2777,6 +2870,7 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if flow == "ai_docq":
         await update.effective_message.chat.send_action(ChatAction.TYPING)
         answer = await answer_from_docs(text, context)
+        log_ai("ai_file_logs", update.effective_user.id, "dosya_soru", text, answer)
         for part in chunks(f"Dosya Hafızası:\n\n{answer}"):
             await update.effective_message.reply_text(part)
         await update.effective_message.reply_text("Başka bir dosya sorusu yazabilir veya geri dönebilirsin.", reply_markup=back_cancel("m:ai"))
@@ -2788,9 +2882,36 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             ask_gemini(text, context),
         )
         combined = f"Agnes AI:\n\n{agnes_answer}\n\nGemini:\n\n{gemini_answer}"
+        log_ai("ai_agnes_logs", update.effective_user.id, "ikisine_sor", text, agnes_answer)
+        log_ai("ai_gemini_logs", update.effective_user.id, "ikisine_sor", text, gemini_answer)
         for part in chunks(combined):
             await update.effective_message.reply_text(part)
         await update.effective_message.reply_text("Başka bir soru yazabilir veya geri dönebilirsin.", reply_markup=back_cancel("m:ai"))
+        return
+
+    if flow == "recipe_ai_prompt":
+        await update.effective_message.chat.send_action(ChatAction.TYPING)
+        prompt = (
+            "Bahçecilik için güvenli, pratik bir reçete tasarla. Türkçe yaz. "
+            "Başlık, amaç, malzemeler, uygulama adımları, pH önerisi, uyarılar şeklinde düzenle. "
+            f"Kullanıcının istediği reçete: {text}"
+        )
+        answer = await ask_gemini(prompt, context) if GEMINI_API_KEY else await ask_groq(prompt, context)
+        context.user_data["draft"] = {"ai_recipe_name": f"AI Reçete - {text[:40]}", "ai_recipe": answer}
+        log_ai("ai_gemini_logs" if GEMINI_API_KEY else "ai_groq_logs", update.effective_user.id, "reçete", text, answer)
+        for part in chunks(f"AI Reçete Taslağı:\n\n{answer}"):
+            await update.effective_message.reply_text(part)
+        await update.effective_message.reply_text("Beğendiysen kaydedebilirsin.", reply_markup=kb([[("Kaydet", "recipe:ai_save"), ("Vazgeç", "m:recipes")], [("Ana Menü", "m:main")]]))
+        return
+
+    if flow == "ailog_delete":
+        mapping = {"agnes": "ai_agnes_logs", "gemini": "ai_gemini_logs", "groq": "ai_groq_logs", "arama": "ai_web_logs", "ses": "ai_voice_logs", "dosya": "ai_file_logs", "gorsel": "ai_image_logs", "görsel": "ai_image_logs"}
+        parts = text.split()
+        if len(parts) != 2 or parts[0].casefold() not in mapping:
+            await update.effective_message.reply_text("Format: sayfa ID\nÖrnek: groq 12", reply_markup=back_cancel("ai:logs"))
+            return
+        await delete_by_id(update, mapping[parts[0].casefold()], parts[1], "AI kaydı silindi.", ai_logs_menu())
+        context.user_data.clear()
         return
 
     if flow == "stock_search":
@@ -3568,6 +3689,7 @@ async def photo_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             tg_file = await context.bot.get_file(file_id)
             image_bytes = bytes(await tg_file.download_as_bytearray())
             ai_comment = await analyze_image_with_gemini(image_bytes, d.get("note", ""))
+            log_ai("ai_image_logs", update.effective_user.id if update.effective_user else "", "görsel", d.get("note", ""), ai_comment, file_id)
         except Exception as exc:
             ai_comment = f"Fotoğraf indirilemedi veya yorumlanamadı: {exc}"
 
@@ -3619,6 +3741,7 @@ async def voice_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             await message.reply_text("Ses metne çevrilemedi.", reply_markup=back_cancel("m:ai"))
             return
         answer = await ask_gemini(text, context) if GEMINI_API_KEY else await ask_groq(text, context)
+        log_ai("ai_voice_logs", update.effective_user.id if update.effective_user else "", "ses", text, answer)
         for part in chunks(f"Ses metni:\n{text}\n\nCevap:\n{answer}"):
             await message.reply_text(part)
         await message.reply_text("Başka ses gönderebilir veya geri dönebilirsin.", reply_markup=back_cancel("m:ai"))
@@ -3645,6 +3768,7 @@ async def document_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             return
         summary_prompt = f"Bu dokümanı Türkçe, kısa ve kullanışlı şekilde özetle. Önemli maddeleri çıkar.\n\nDosya: {filename}\n\nMetin:\n{text[:12000]}"
         summary = await ask_gemini(summary_prompt, context) if GEMINI_API_KEY else await ask_groq(summary_prompt, context)
+        log_ai("ai_file_logs", update.effective_user.id if update.effective_user else "", "dosya_ozet", filename, summary)
         item_id = next_id("ai_docs")
         pinecone_status = await pinecone_store_doc(item_id, filename, text)
         append_record("ai_docs", AI_DOC_HEADERS, {
