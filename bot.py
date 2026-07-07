@@ -54,6 +54,8 @@ TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "").strip()
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY", "").strip()
 PINECONE_HOST = os.getenv("PINECONE_HOST", "").strip()
 LLAMA_CLOUD_API_KEY = os.getenv("LLAMA_CLOUD_API_KEY", "").strip()
+PERENUAL_API_KEY = os.getenv("PERENUAL_API_KEY", "").strip()
+PERENUAL_IDENTIFY_API_KEY = os.getenv("PERENUAL_IDENTIFY_API_KEY", "").strip()
 PORT = int(os.getenv("PORT", "10000"))
 
 INVENTORY_HEADERS = ["ID", "Kategori", "Malzeme / Alet", "Başlangıç Miktarı", "Kullanılan", "Kalan Miktar", "Birim", "Görevi / Not", "CreatedAt"]
@@ -288,6 +290,7 @@ def main_menu() -> InlineKeyboardMarkup:
         [("📍 Bugün", "m:today")],
         [("📋 Kayıtlar", "g:records"), ("🌱 Bahçe", "g:garden")],
         [("🧪 Üretim", "g:production"), ("🤖 AI", "g:ai")],
+        [("🌿 Bitki AI", "m:plant_ai")],
         [("⚙️ Sistem", "g:system")],
     ])
 
@@ -321,6 +324,14 @@ def production_group_menu() -> InlineKeyboardMarkup:
 def ai_group_menu() -> InlineKeyboardMarkup:
     return kb([
         [("🤖 AI Sor", "m:ai"), ("📸 Foto AI", "obs:ai")],
+        [("🔙 Geri", "m:main")],
+    ])
+
+
+def plant_ai_menu() -> InlineKeyboardMarkup:
+    return kb([
+        [("🔎 Bitki Ara", "plant:search"), ("📋 Bakım Bilgisi", "plant:care")],
+        [("📷 Bitki Tanı", "plant:identify"), ("🤖 AI Tavsiye", "plant:advice")],
         [("🔙 Geri", "m:main")],
     ])
 
@@ -793,6 +804,24 @@ async def handle_ai_log_callback(update: Update, context: ContextTypes.DEFAULT_T
         await edit_or_send(update, "Silmek için şu formatta yaz:\n\nsayfa ID\n\nÖrnek: groq 12\n\nSayfalar: agnes, gemini, groq, arama, ses, dosya, gorsel", back_cancel("ai:logs"))
 
 
+async def handle_plant_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, data: str) -> None:
+    if data == "plant:search":
+        context.user_data["flow"] = "plant_search"
+        await edit_or_send(update, "Aranacak bitki adını yaz. Örn: lavanta, monstera, rose", back_cancel("m:plant_ai"))
+        return
+    if data == "plant:care":
+        context.user_data["flow"] = "plant_care"
+        await edit_or_send(update, "Bakım bilgisi istediğin bitki adını yaz.", back_cancel("m:plant_ai"))
+        return
+    if data == "plant:advice":
+        context.user_data["flow"] = "plant_advice"
+        await edit_or_send(update, "Bitkiyle ilgili sorunu yaz. Perenual verisi + AI ile cevaplayacağım.", back_cancel("m:plant_ai"))
+        return
+    if data == "plant:identify":
+        context.user_data["flow"] = "plant_identify"
+        await edit_or_send(update, "Bitki fotoğrafını gönder. Identification API erişimin varsa tanımayı deneyeceğim.", back_cancel("m:plant_ai"))
+
+
 def find_inventory_by_row(row_number: int) -> dict[str, Any] | None:
     for row in records("inventory"):
         if int(row["_row"]) == row_number:
@@ -1152,6 +1181,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         context.user_data.clear()
         await show_today(update)
         return
+    if data == "m:plant_ai":
+        context.user_data.clear()
+        await edit_or_send(update, "Bitki AI", plant_ai_menu())
+        return
     if data == "g:records":
         context.user_data.clear()
         await edit_or_send(update, "Kayıtlar", records_group_menu())
@@ -1310,6 +1343,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
     if data.startswith("ailog:"):
         await handle_ai_log_callback(update, context, data)
+        return
+    if data.startswith("plant:"):
+        await handle_plant_callback(update, context, data)
         return
     if data.startswith("issue:"):
         await handle_issue_callback(update, context, data)
@@ -2700,6 +2736,76 @@ async def answer_from_docs(question: str, context: ContextTypes.DEFAULT_TYPE) ->
     return await ask_groq(prompt, context)
 
 
+async def perenual_get(path: str, params: dict[str, Any]) -> dict[str, Any]:
+    if not PERENUAL_API_KEY:
+        raise RuntimeError("Perenual API anahtarı eksik. Render Variables içine PERENUAL_API_KEY eklenmeli.")
+    url = f"https://perenual.com/api/{path.lstrip('/')}"
+    full_params = {"key": PERENUAL_API_KEY, **params}
+    response = await asyncio.to_thread(lambda: requests.get(url, params=full_params, timeout=45))
+    response.raise_for_status()
+    return response.json()
+
+
+def plant_summary(item: dict[str, Any]) -> str:
+    name = item.get("common_name") or item.get("scientific_name") or "-"
+    sci = item.get("scientific_name")
+    if isinstance(sci, list):
+        sci = ", ".join(str(x) for x in sci[:2])
+    return (
+        f"Bitki: {name}\n"
+        f"Bilimsel ad: {sci or '-'}\n"
+        f"Sulama: {item.get('watering', '-')}\n"
+        f"Güneş: {', '.join(item.get('sunlight', [])) if isinstance(item.get('sunlight'), list) else item.get('sunlight', '-')}\n"
+        f"Bakım seviyesi: {item.get('maintenance', '-')}\n"
+        f"Zehirli mi: {item.get('poisonous_to_humans', '-')}\n"
+    )
+
+
+async def search_plant(query: str, context: ContextTypes.DEFAULT_TYPE) -> str:
+    data = await perenual_get("species-list", {"q": query})
+    results = data.get("data", [])[:5]
+    if not results:
+        return "Bitki bulunamadı."
+    text = "Bulunan bitkiler\n\n"
+    for item in results:
+        text += f"ID {item.get('id')} - {item.get('common_name') or '-'}\n"
+        sci = item.get("scientific_name")
+        text += f"Bilimsel: {', '.join(sci) if isinstance(sci, list) else sci or '-'}\n\n"
+    return text
+
+
+async def plant_care(query: str, context: ContextTypes.DEFAULT_TYPE) -> str:
+    data = await perenual_get("species-list", {"q": query})
+    results = data.get("data", [])
+    if not results:
+        return "Bitki bulunamadı."
+    plant_id = results[0].get("id")
+    detail = await perenual_get(f"species/details/{plant_id}", {})
+    raw = plant_summary(detail)
+    prompt = f"Bu Perenual bitki verisini Türkçe, pratik bakım tavsiyesine çevir. Bahçeciye kısa öneriler ver.\n\n{json.dumps(detail, ensure_ascii=False)[:8000]}"
+    ai = await ask_gemini(prompt, context) if GEMINI_API_KEY else await ask_groq(prompt, context)
+    return f"{raw}\nAI Bakım Tavsiyesi:\n{ai}"
+
+
+async def identify_plant(image_bytes: bytes, note: str, context: ContextTypes.DEFAULT_TYPE) -> str:
+    key = PERENUAL_IDENTIFY_API_KEY or PERENUAL_API_KEY
+    if not key:
+        return "Perenual plant identification anahtarı eksik. Render Variables içine PERENUAL_IDENTIFY_API_KEY eklenince çalışır."
+    payload = {"images": [base64.b64encode(image_bytes).decode("ascii")], "organs": ["leaf"], "note": note}
+    try:
+        response = await asyncio.to_thread(
+            lambda: requests.post("https://perenual.com/api/identify", params={"key": key}, json=payload, timeout=60)
+        )
+        response.raise_for_status()
+        data = response.json()
+        prompt = f"Bu bitki tanıma sonucunu Türkçe özetle ve bakım önerisi ver:\n{json.dumps(data, ensure_ascii=False)[:8000]}"
+        if GEMINI_API_KEY:
+            return await ask_gemini(prompt, context)
+        return json.dumps(data, ensure_ascii=False)[:2000]
+    except Exception as exc:
+        return f"Bitki tanıma API hatası: {exc}"
+
+
 async def ask_gemini(question: str, context: ContextTypes.DEFAULT_TYPE) -> str:
     if not GEMINI_API_KEY:
         return "Gemini API anahtarı eksik. Railway Variables içine GEMINI_API_KEY eklenmeli."
@@ -2912,6 +3018,33 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             return
         await delete_by_id(update, mapping[parts[0].casefold()], parts[1], "AI kaydı silindi.", ai_logs_menu())
         context.user_data.clear()
+        return
+
+    if flow == "plant_search":
+        await update.effective_message.chat.send_action(ChatAction.TYPING)
+        try:
+            answer = await search_plant(text, context)
+        except Exception as exc:
+            answer = f"Bitki arama hatası: {exc}"
+        await send_chunks(update, answer, plant_ai_menu())
+        return
+
+    if flow == "plant_care":
+        await update.effective_message.chat.send_action(ChatAction.TYPING)
+        try:
+            answer = await plant_care(text, context)
+        except Exception as exc:
+            answer = f"Bitki bakım hatası: {exc}"
+        log_ai("ai_gemini_logs" if GEMINI_API_KEY else "ai_groq_logs", update.effective_user.id, "bitki_bakim", text, answer)
+        await send_chunks(update, answer, plant_ai_menu())
+        return
+
+    if flow == "plant_advice":
+        await update.effective_message.chat.send_action(ChatAction.TYPING)
+        prompt = f"Bitki bakım sorusuna Türkçe, pratik ve temkinli cevap ver. Soru: {text}"
+        answer = await ask_gemini(prompt, context) if GEMINI_API_KEY else await ask_groq(prompt, context)
+        log_ai("ai_gemini_logs" if GEMINI_API_KEY else "ai_groq_logs", update.effective_user.id, "bitki_ai", text, answer)
+        await send_chunks(update, answer, plant_ai_menu())
         return
 
     if flow == "stock_search":
@@ -3673,6 +3806,18 @@ async def photo_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     flow = context.user_data.get("flow")
     message = update.effective_message
     if not message or not message.photo:
+        return
+    if flow == "plant_identify":
+        await message.chat.send_action(ChatAction.TYPING)
+        try:
+            photo = message.photo[-1]
+            tg_file = await context.bot.get_file(photo.file_id)
+            image_bytes = bytes(await tg_file.download_as_bytearray())
+            answer = await identify_plant(image_bytes, "", context)
+            log_ai("ai_image_logs", update.effective_user.id if update.effective_user else "", "bitki_tani", "Bitki fotoğrafı", answer, photo.file_id)
+            await send_chunks(update, answer, plant_ai_menu())
+        except Exception as exc:
+            await message.reply_text(f"Bitki tanıma hatası: {exc}", reply_markup=plant_ai_menu())
         return
     if flow != "obs_photo":
         await message.reply_text("Fotoğrafı kaydetmek veya yorumlatmak için önce Gözlem menüsünden bir seçenek seç.", reply_markup=observation_menu())
