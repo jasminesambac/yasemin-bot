@@ -246,6 +246,52 @@ def next_yearly_date(day: int, month: int, from_day: datetime | None = None) -> 
     return target.strftime(DATE_FMT)
 
 
+def adjust_initial_reminder_date(d: dict[str, Any]) -> None:
+    """Hatırlatma ilk kez kaydedilirken tarih+saat seçimi zaten geçmişte kalmışsa
+    (ör. bugünün saati geçmiş), tekrar tipine göre bir sonraki uygun tarihe ilerletir.
+    Böylece kayıt biter bitmez yanlışlıkla anlık bildirim gitmez. Tek seferlik
+    hatırlatmalara dokunmaz (kullanıcı bilerek geçmiş bir saat seçmiş olabilir)."""
+    due = parse_datetime(d.get("date"), d.get("time"))
+    if not due:
+        return
+    current = now()
+    if due > current:
+        return
+    repeat = str(d.get("repeat", "tek")).strip().casefold()
+    if repeat in {"günlük", "gunluk", "her gün", "hergun", "daily"}:
+        while due <= current:
+            due += timedelta(days=1)
+    elif repeat in {"haftalık", "haftalik", "weekly"}:
+        while due <= current:
+            due += timedelta(days=7)
+    elif repeat in {"aylık", "aylik", "monthly"}:
+        try:
+            monthday = int(d.get("monthday") or due.day)
+        except Exception:
+            monthday = due.day
+        due = next_monthly_after(due, monthday, current)
+    elif repeat in {"aralık", "aralik", "gunde_bir", "interval"}:
+        try:
+            interval_days = int(d.get("interval_days") or 0)
+        except Exception:
+            interval_days = 0
+        if interval_days > 0:
+            while due <= current:
+                due += timedelta(days=interval_days)
+        else:
+            return
+    elif repeat in {"yıllık", "yillik", "yearly"}:
+        try:
+            yday = int(d.get("yearly_day") or due.day)
+            ymonth = int(d.get("yearly_month") or due.month)
+        except Exception:
+            yday, ymonth = due.day, due.month
+        due = next_yearly_after(due, yday, ymonth, current)
+    else:
+        return
+    d["date"] = due.strftime(DATE_FMT)
+
+
 def next_yearly_after(due: datetime, day: int, month: int, current: datetime) -> datetime:
     year = due.year
     while True:
@@ -543,6 +589,14 @@ def reminder_limit_menu() -> InlineKeyboardMarkup:
         [("Sınırsız", "rem:limit:none")],
         [("Bitiş Tarihi Belirle", "rem:limit:enddate")],
         [("Tekrar Sayısı Belirle", "rem:limit:count")],
+        [("Geri", "rem:add"), ("İptal", "cancel"), ("Ana Menü", "m:main")],
+    ])
+
+
+def interval_start_date_menu() -> InlineKeyboardMarkup:
+    return kb([
+        [("Bugün", "rem:istart:today"), ("Yarın", "rem:istart:tomorrow")],
+        [("Özel Tarih", "rem:istart:custom")],
         [("Geri", "rem:add"), ("İptal", "cancel"), ("Ana Menü", "m:main")],
     ])
 
@@ -2730,6 +2784,16 @@ async def handle_reminder_callback(update: Update, context: ContextTypes.DEFAULT
             await edit_or_send(update, "Kaç kere tekrarlansın? Örn: 5", back_cancel("rem:add"))
             return
         return
+    if data.startswith("rem:istart:"):
+        choice = data.rsplit(":", 1)[1]
+        if choice == "custom":
+            context.user_data["flow"] = "rem_interval_start_custom"
+            await edit_or_send(update, "Başlangıç tarihini yaz. Örn: 14-06-2026", back_cancel("rem:add"))
+            return
+        draft = context.user_data.setdefault("draft", {})
+        draft["date"] = today_str() if choice == "today" else (now() + timedelta(days=1)).strftime(DATE_FMT)
+        await edit_or_send(update, "Saat seç:", time_choice_menu())
+        return
     if data.startswith("rem:cal:"):
         _, _, year_s, month_s = data.split(":")
         await edit_or_send(update, "Tarih seç veya elle yaz:", reminder_calendar_menu(int(year_s), int(month_s)))
@@ -3698,13 +3762,36 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
     flow = context.user_data.get("flow")
     if not flow:
-        if text and (GEMINI_API_KEY or GROQ_API_KEY):
+        if not text:
+            await update.effective_message.reply_text("Lütfen menüden bir buton seç.", reply_markup=main_menu())
+            return
+        if GEMINI_API_KEY or GROQ_API_KEY:
             await update.effective_message.chat.send_action(ChatAction.TYPING)
             parsed = await parse_quick_log(text, context)
             if parsed:
                 context.user_data["quick_log_pending"] = parsed
                 await update.effective_message.reply_text(quick_log_summary(parsed), reply_markup=quick_log_confirm_kb())
                 return
+        if AGNES_API_KEY or GEMINI_API_KEY or GROQ_API_KEY:
+            await update.effective_message.chat.send_action(ChatAction.TYPING)
+            if GEMINI_API_KEY:
+                if not context.user_data.get("gemini_history") and not context.user_data.get("ai_memory_cleared"):
+                    context.user_data["gemini_history"] = load_persistent_ai_history("ai_gemini_logs", update.effective_user.id)
+                answer = await ask_gemini(text, context)
+                log_sheet = "ai_gemini_logs"
+            elif GROQ_API_KEY:
+                if not context.user_data.get("groq_history") and not context.user_data.get("ai_memory_cleared"):
+                    context.user_data["groq_history"] = load_persistent_ai_history("ai_groq_logs", update.effective_user.id)
+                answer = await ask_groq(text, context)
+                log_sheet = "ai_groq_logs"
+            else:
+                if not context.user_data.get("ai_history") and not context.user_data.get("ai_memory_cleared"):
+                    context.user_data["ai_history"] = load_persistent_ai_history("ai_agnes_logs", update.effective_user.id)
+                answer = await ask_ai(text, update.effective_user.id, context)
+                log_sheet = "ai_agnes_logs"
+            log_ai(log_sheet, update.effective_user.id, "serbest_sohbet", text, answer)
+            await send_chunks(update, answer, main_menu())
+            return
         await update.effective_message.reply_text("Lütfen menüden bir buton seç.", reply_markup=main_menu())
         return
 
@@ -4557,9 +4644,16 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             await update.effective_message.reply_text("Gün sayısı pozitif bir tam sayı olmalı. Örn: 3", reply_markup=back_cancel("rem:add"))
             return
         draft = context.user_data.setdefault("draft", {})
-        draft["date"] = today_str()
         draft["repeat"] = "aralik"
         draft["interval_days"] = interval_days
+        await update.effective_message.reply_text("Başlangıç tarihi seç:", reply_markup=interval_start_date_menu())
+        return
+    if flow == "rem_interval_start_custom":
+        date = parse_date(text)
+        if not date:
+            await update.effective_message.reply_text("Tarih anlaşılamadı. Örn: 14-06-2026", reply_markup=back_cancel("rem:add"))
+            return
+        context.user_data.setdefault("draft", {})["date"] = date
         await update.effective_message.reply_text("Saat seç:", reply_markup=time_choice_menu())
         return
     if flow == "rem_yearly_date":
@@ -4613,6 +4707,7 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
     if flow == "rem_text":
         d = context.user_data["draft"]
+        adjust_initial_reminder_date(d)
         item_id = next_id("reminders")
         payload = {
             "ID": item_id,
@@ -4738,10 +4833,15 @@ async def photo_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 async def voice_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     message = update.effective_message
-    if not message or context.user_data.get("flow") != "ai_voice":
+    flow = context.user_data.get("flow")
+    # "ai_voice" akışındayken (Sesli Sor butonu) ya da hiçbir akış açık değilken
+    # (direkt sohbete sesli mesaj atma) sesli mesajı işle. Başka bir form/akış
+    # açıksa (ör. stok ekleme) hiç dokunma, o akış bozulmasın.
+    if not message or (flow and flow != "ai_voice"):
         return
+    menu_kb = back_cancel("m:ai") if flow == "ai_voice" else main_menu()
     if not GROQ_CLIENT:
-        await message.reply_text("Groq ayarı eksik. Render Variables içine GROQ_API_KEY eklenmeli.", reply_markup=ai_menu())
+        await message.reply_text("Sesli mesajları işlemek için Groq ayarı eksik. Render Variables içine GROQ_API_KEY eklenmeli.", reply_markup=menu_kb)
         return
     media = message.voice or message.audio
     if not media:
@@ -4761,15 +4861,18 @@ async def voice_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         )
         text = getattr(transcript, "text", "").strip()
         if not text:
-            await message.reply_text("Ses metne çevrilemedi.", reply_markup=back_cancel("m:ai"))
+            await message.reply_text("Ses metne çevrilemedi.", reply_markup=menu_kb)
             return
         answer = await ask_gemini(text, context) if GEMINI_API_KEY else await ask_groq(text, context)
         log_ai("ai_voice_logs", update.effective_user.id if update.effective_user else "", "ses", text, answer)
         for part in chunks(f"Ses metni:\n{text}\n\nCevap:\n{answer}"):
             await message.reply_text(part)
-        await message.reply_text("Başka ses gönderebilir veya geri dönebilirsin.", reply_markup=back_cancel("m:ai"))
+        if flow == "ai_voice":
+            await message.reply_text("Başka ses gönderebilir veya geri dönebilirsin.", reply_markup=back_cancel("m:ai"))
+        else:
+            await message.reply_text("Başka bir mesaj yazabilir veya menüden devam edebilirsin.", reply_markup=main_menu())
     except Exception as exc:
-        await message.reply_text(f"Ses işleme hatası: {exc}", reply_markup=back_cancel("m:ai"))
+        await message.reply_text(f"Ses işleme hatası: {exc}", reply_markup=menu_kb)
 
 
 async def document_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
