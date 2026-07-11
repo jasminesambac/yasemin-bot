@@ -839,6 +839,25 @@ def log_ai(sheet_name: str, user_id: int | str, kind: str, prompt: str, answer: 
     return 0
 
 
+def load_persistent_ai_history(sheet_name: str, user_id: int | str, limit: int = 6) -> list[dict[str, str]]:
+    """Bot yeniden başladığında veya kullanıcı menüden çıkıp girdiğinde context.user_data
+    sıfırlanır. Bu fonksiyon, o kullanıcının bu AI'daki son kayıtlı sorularını/cevaplarını
+    Sheets'ten okuyup konuşma geçmişi olarak geri kazandırır (kalıcı hafıza hissi verir)."""
+    try:
+        rows = [r for r in records(sheet_name) if str(r.get("Kullanici", "")) == str(user_id)]
+    except Exception:
+        return []
+    history: list[dict[str, str]] = []
+    for row in rows[-limit:]:
+        q = str(row.get("Girdi", "")).strip()[:2000]
+        a = str(row.get("Cevap", "")).strip()[:2000]
+        if q:
+            history.append({"role": "user", "content": q})
+        if a:
+            history.append({"role": "assistant", "content": a})
+    return history
+
+
 async def show_ai_logs(update: Update, sheet_name: str) -> None:
     labels = {"ai_agnes_logs": "Agnes", "ai_gemini_logs": "Gemini", "ai_groq_logs": "Groq", "ai_web_logs": "Güncel Arama", "ai_voice_logs": "Ses", "ai_file_logs": "Dosya", "ai_image_logs": "Görsel"}
     rows = records(sheet_name)[-20:][::-1]
@@ -1400,6 +1419,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         context.user_data.pop("ai_history", None)
         context.user_data.pop("gemini_history", None)
         context.user_data.pop("groq_history", None)
+        context.user_data["ai_memory_cleared"] = True
         await edit_or_send(update, "AI konuşma hafızası temizlendi.", ai_menu())
         return
 
@@ -2619,11 +2639,7 @@ async def handle_observation_callback(update: Update, context: ContextTypes.DEFA
         await edit_or_send(update, "Silmek istediğin gözlem ID numarasını yaz.", back_cancel("m:observation"))
 
 
-async def send_backup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    message = update.effective_message
-    if not message:
-        return
-    await message.chat.send_action(ChatAction.UPLOAD_DOCUMENT)
+def build_backup_zip() -> io.BytesIO:
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
         for filename, sheet_name in [
@@ -2646,7 +2662,38 @@ async def send_backup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             writer.writerows(SHEET[sheet_name].get_all_values())
             zf.writestr(filename, out.getvalue().encode("utf-8-sig"))
     buffer.seek(0)
+    return buffer
+
+
+async def send_backup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    message = update.effective_message
+    if not message:
+        return
+    await message.chat.send_action(ChatAction.UPLOAD_DOCUMENT)
+    buffer = build_backup_zip()
     await message.reply_document(InputFile(buffer, filename=f"yasemin_yedek_{today_str()}.zip"), caption="Yedek hazır.")
+
+
+async def weekly_backup_worker(app: Application) -> None:
+    """Her Pazartesi 08:00-08:29 arasında (TR saati) otomatik olarak zip yedeği gönderir.
+    Aynı hafta içinde tekrar göndermemek için alerts sayfasında son gönderilen hafta izlenir."""
+    while True:
+        try:
+            chat_id = alert_value("stock_chat_id")
+            current = now()
+            if chat_id and current.weekday() == 0 and current.hour == 8:
+                week_key = current.strftime("%Y-%W")
+                if alert_value("last_backup_week") != week_key:
+                    buffer = build_backup_zip()
+                    await app.bot.send_document(
+                        chat_id=int(chat_id),
+                        document=InputFile(buffer, filename=f"yasemin_yedek_{today_str()}.zip"),
+                        caption="Haftalık otomatik yedek.",
+                    )
+                    set_alert_value("last_backup_week", week_key)
+        except Exception:
+            log.exception("Haftalık otomatik yedekleme hatası")
+        await asyncio.sleep(1800)
 
 
 def schedule_next_reminder(row: dict[str, Any], next_due: datetime) -> None:
@@ -2699,7 +2746,16 @@ async def reminder_worker(app: Application) -> None:
                     chat_id = str(row.get("Chat_ID") or "").strip()
                     if not due or not chat_id or due > current:
                         continue
-                    await app.bot.send_message(chat_id=int(chat_id), text=f"Hatırlatma\n\nID {row_id_text(row)} - {row.get('Metin', '-')}")
+                    weather_note = ""
+                    try:
+                        metin = str(row.get("Metin", ""))
+                        if "sula" in metin.casefold():
+                            garden_city = alert_value("garden_city")
+                            if garden_city and await is_rain_forecast_today(garden_city):
+                                weather_note = "\n\n(Not: Bugün için yağmur bekleniyor, sulamayı erteleyebilirsin.)"
+                    except Exception:
+                        log.exception("Hava durumu kontrolü başarısız, hatırlatma yine de gönderilecek")
+                    await app.bot.send_message(chat_id=int(chat_id), text=f"Hatırlatma\n\nID {row_id_text(row)} - {row.get('Metin', '-')}{weather_note}")
                     repeat = str(row.get("Tekrar", "")).strip().casefold()
                     if repeat in {"günlük", "gunluk", "her gün", "hergun", "daily"}:
                         next_due = due
@@ -2740,28 +2796,6 @@ async def reminder_worker(app: Application) -> None:
         await asyncio.sleep(30)
 
 
-def create_stock_reminder(item: dict[str, Any], remaining: float, chat_id: str) -> None:
-    """Kritik stok tespit edildiğinde, uyarı mesajına ek olarak bir hatırlatma kaydı oluşturur
-    (30 dk sonrası için) böylece Bugün ekranında ve Bekleyen Hatırlatmalar listesinde de görünür."""
-    due_dt = now() + timedelta(minutes=30)
-    item_id = next_id("reminders")
-    append_record("reminders", REMINDER_HEADERS, {
-        "ID": item_id,
-        "Tarih": due_dt.strftime(DATE_FMT),
-        "Saat": due_dt.strftime("%H:%M"),
-        "Metin": f"Kritik stok: {item.get('Malzeme / Alet','-')} ({format_decimal(remaining)} {item.get('Birim','')}). Tedarik/ekleme yapmayı unutma.",
-        "Durum": "bekliyor",
-        "Chat_ID": chat_id,
-        "Tekrar": "tek",
-        "Hafta_Gunu": "",
-        "Ay_Gunu": "",
-        "Gun_Araligi": "",
-        "Bitis_Tarihi": "",
-        "Kalan_Tekrar": "",
-        "CreatedAt": now().isoformat(timespec="seconds"),
-    })
-
-
 async def stock_alert_worker(app: Application) -> None:
     while True:
         try:
@@ -2789,10 +2823,6 @@ async def stock_alert_worker(app: Application) -> None:
                             chat_id=int(chat_id),
                             text=f"Kritik stok uyarısı\n\nID {item_id} - {item.get('Malzeme / Alet','-')}: {format_decimal(remaining)} {item.get('Birim','')}",
                         )
-                        try:
-                            create_stock_reminder(item, remaining, chat_id)
-                        except Exception:
-                            log.exception("Kritik stok hatırlatması oluşturulamadı: ID %s", item_id)
                 new_sent = sent.intersection(current_critical)
                 if new_sent != sent:
                     set_alert_value("stock_sent_v2", ",".join(sorted(new_sent)))
@@ -2804,6 +2834,7 @@ async def stock_alert_worker(app: Application) -> None:
 async def post_init(app: Application) -> None:
     app.create_task(reminder_worker(app))
     app.create_task(stock_alert_worker(app))
+    app.create_task(weekly_backup_worker(app))
 
 
 async def ask_ai(question: str, user_id: int, context: ContextTypes.DEFAULT_TYPE) -> str:
@@ -3100,6 +3131,45 @@ async def identify_plant(image_bytes: bytes, note: str, context: ContextTypes.DE
     return raw_text
 
 
+async def identify_plant_disease(image_bytes: bytes) -> str:
+    """PlantNet'in hastalık/zararlı tespit API'sine bakar. Anahtar yoksa veya sonuç
+    gelmezse sessizce boş string döner (bu bir ek/opsiyonel tarama, ana akışı bozmamalı)."""
+    if not PLANTNET_API_KEY:
+        return ""
+    url = "https://my-api.plantnet.org/v2/diseases/identify"
+    try:
+        response = await asyncio.to_thread(
+            lambda: requests.post(
+                url,
+                params={"api-key": PLANTNET_API_KEY, "lang": "en", "nb-results": 3},
+                files=[("images", ("photo.jpg", image_bytes, "image/jpeg"))],
+                data={"organs": "auto"},
+                timeout=60,
+            )
+        )
+        if not response.ok:
+            return ""
+        data = response.json()
+    except Exception:
+        log.exception("PlantNet hastalık taraması hatası")
+        return ""
+
+    results = data.get("results", [])[:3]
+    if not results:
+        return ""
+    lines = ["Hastalık/Zararlı Taraması (PlantNet):"]
+    for item in results:
+        score = (item.get("score") or 0) * 100
+        if score < 5:
+            continue
+        desc = item.get("description") or item.get("name") or "-"
+        lines.append(f"- {desc} (%{score:.0f} olasılık)")
+    if len(lines) == 1:
+        return ""
+    lines.append("Not: Bu bir olasılık taramasıdır, kesin teşhis değildir.")
+    return "\n".join(lines)
+
+
 async def ask_gemini(question: str, context: ContextTypes.DEFAULT_TYPE) -> str:
     if not GEMINI_API_KEY:
         return "Gemini API anahtarı eksik. Railway Variables içine GEMINI_API_KEY eklenmeli."
@@ -3192,7 +3262,34 @@ def translate_weather(text: str) -> str:
     return text
 
 
+async def is_rain_forecast_today(city: str) -> bool:
+    """Bugün için yağmur ihtimali yüksek mi? Hata durumunda sessizce False döner
+    (bu bir bonus kontrol, hatırlatmanın gönderilmesini asla engellememeli)."""
+    try:
+        url = f"https://wttr.in/{city}?format=j1&m"
+        data = await asyncio.to_thread(lambda: requests.get(url, timeout=10).json())
+        today = (data.get("weather") or [{}])[0]
+        chance = 0
+        precip = 0.0
+        for hour in today.get("hourly", []):
+            try:
+                chance = max(chance, int(hour.get("chanceofrain", 0)))
+            except Exception:
+                pass
+            try:
+                precip += float(hour.get("precipMM", 0))
+            except Exception:
+                pass
+        return chance >= 50 or precip >= 1.0
+    except Exception:
+        return False
+
+
 async def show_weather(update: Update, city: str, *, monthly: bool = False) -> None:
+    try:
+        set_alert_value("garden_city", city)
+    except Exception:
+        log.exception("Bahçe şehri kaydedilemedi")
     try:
         if monthly:
             url = f"https://wttr.in/{city}?format=j1&lang=tr&m"
@@ -3235,6 +3332,8 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     if flow == "ai_agnes":
         await update.effective_message.chat.send_action(ChatAction.TYPING)
+        if not context.user_data.get("ai_history") and not context.user_data.get("ai_memory_cleared"):
+            context.user_data["ai_history"] = load_persistent_ai_history("ai_agnes_logs", update.effective_user.id)
         answer = await ask_ai(text, update.effective_user.id, context)
         log_ai("ai_agnes_logs", update.effective_user.id, "metin", text, answer)
         for part in chunks(f"Agnes AI:\n\n{answer}"):
@@ -3243,6 +3342,8 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
     if flow == "ai_gemini":
         await update.effective_message.chat.send_action(ChatAction.TYPING)
+        if not context.user_data.get("gemini_history") and not context.user_data.get("ai_memory_cleared"):
+            context.user_data["gemini_history"] = load_persistent_ai_history("ai_gemini_logs", update.effective_user.id)
         answer = await ask_gemini(text, context)
         log_ai("ai_gemini_logs", update.effective_user.id, "metin", text, answer)
         for part in chunks(f"Gemini:\n\n{answer}"):
@@ -3251,6 +3352,8 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
     if flow == "ai_groq":
         await update.effective_message.chat.send_action(ChatAction.TYPING)
+        if not context.user_data.get("groq_history") and not context.user_data.get("ai_memory_cleared"):
+            context.user_data["groq_history"] = load_persistent_ai_history("ai_groq_logs", update.effective_user.id)
         answer = await ask_groq(text, context)
         log_ai("ai_groq_logs", update.effective_user.id, "metin", text, answer)
         for part in chunks(f"Groq:\n\n{answer}"):
@@ -3286,6 +3389,10 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
     if flow == "ai_both":
         await update.effective_message.chat.send_action(ChatAction.TYPING)
+        if not context.user_data.get("ai_history") and not context.user_data.get("ai_memory_cleared"):
+            context.user_data["ai_history"] = load_persistent_ai_history("ai_agnes_logs", update.effective_user.id)
+        if not context.user_data.get("gemini_history") and not context.user_data.get("ai_memory_cleared"):
+            context.user_data["gemini_history"] = load_persistent_ai_history("ai_gemini_logs", update.effective_user.id)
         agnes_answer, gemini_answer = await asyncio.gather(
             ask_ai(text, update.effective_user.id, context),
             ask_gemini(text, context),
@@ -4177,6 +4284,12 @@ async def photo_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             tg_file = await context.bot.get_file(file_id)
             image_bytes = bytes(await tg_file.download_as_bytearray())
             ai_comment = await analyze_image_with_gemini(image_bytes, d.get("note", ""))
+            try:
+                disease_note = await identify_plant_disease(image_bytes)
+            except Exception:
+                disease_note = ""
+            if disease_note:
+                ai_comment = f"{ai_comment}\n\n{disease_note}"
             log_ai("ai_image_logs", update.effective_user.id if update.effective_user else "", "görsel", d.get("note", ""), ai_comment, file_id)
         except Exception as exc:
             ai_comment = f"Fotoğraf indirilemedi veya yorumlanamadı: {exc}"
