@@ -4,3 +4,4 @@ oauth2client==4.1.3
 requests==2.32.3
 openai==1.57.0
 pypdf==5.1.0
+matplotlib==3.9.2
