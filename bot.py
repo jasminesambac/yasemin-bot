@@ -38,6 +38,7 @@ logging.getLogger("httpcore").setLevel(logging.WARNING)
 TR_TZ_OFFSET = timedelta(hours=3)
 DATE_FMT = "%d-%m-%Y"
 MSG_LIMIT = 3900
+CACHE_TTL_SECONDS = 15
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 SHEET_ID = os.getenv("SHEET_ID", "").strip()
@@ -58,13 +59,15 @@ PINECONE_HOST = os.getenv("PINECONE_HOST", "").strip()
 LLAMA_CLOUD_API_KEY = os.getenv("LLAMA_CLOUD_API_KEY", "").strip()
 PERENUAL_API_KEY = os.getenv("PERENUAL_API_KEY", "").strip()
 PERENUAL_IDENTIFY_API_KEY = os.getenv("PERENUAL_IDENTIFY_API_KEY", "").strip()
+PLANTNET_API_KEY = os.getenv("PLANTNET_API_KEY", "").strip()
+PLANTNET_PROJECT = os.getenv("PLANTNET_PROJECT", "all").strip() or "all"
 PORT = int(os.getenv("PORT", "10000"))
 
 INVENTORY_HEADERS = ["ID", "Kategori", "Malzeme / Alet", "Başlangıç Miktarı", "Kullanılan", "Kalan Miktar", "Birim", "Görevi / Not", "CreatedAt"]
 HISTORY_HEADERS = ["ID", "Tarih", "Islem", "Malzeme", "Miktar", "Birim", "pH", "Not", "CreatedAt"]
 KOMPOST_HEADERS = ["Tarih", "Islem", "Kullanilan_Malzeme_Miktar", "pH", "Not", "ID"]
 PH_HEADERS = ["ID", "Tarih", "Teneke_No", "pH", "Not", "CreatedAt"]
-REMINDER_HEADERS = ["ID", "Tarih", "Saat", "Metin", "Durum", "Chat_ID", "Tekrar", "Hafta_Gunu", "Ay_Gunu", "CreatedAt"]
+REMINDER_HEADERS = ["ID", "Tarih", "Saat", "Metin", "Durum", "Chat_ID", "Tekrar", "Hafta_Gunu", "Ay_Gunu", "Gun_Araligi", "Bitis_Tarihi", "Kalan_Tekrar", "CreatedAt"]
 OBSERVATION_HEADERS = ["ID", "Tarih", "Kategori", "Not", "Foto_File_ID", "AI_Yorum", "CreatedAt"]
 PLAN_HEADERS = ["ID", "Tarih", "Islem", "Hedef", "Malzeme_Miktar", "pH", "Not", "Durum", "CreatedAt", "CompletedAt"]
 AREA_HEADERS = ["ID", "Alan", "Not", "Durum", "CreatedAt"]
@@ -226,8 +229,10 @@ def next_monthly_after(due: datetime, day: int, current: datetime) -> datetime:
 
 def repeat_label(row_or_repeat: Any) -> str:
     repeat = row_or_repeat
+    interval_days = None
     if isinstance(row_or_repeat, dict):
         repeat = row_or_repeat.get("Tekrar", "tek")
+        interval_days = row_or_repeat.get("Gun_Araligi")
     repeat = str(repeat or "tek").strip().casefold()
     if repeat in {"günlük", "gunluk", "her gün", "hergun", "daily"}:
         return "Her gün"
@@ -235,7 +240,27 @@ def repeat_label(row_or_repeat: Any) -> str:
         return "Haftalık"
     if repeat in {"aylık", "aylik", "monthly"}:
         return "Aylık"
+    if repeat in {"aralık", "aralik", "gunde_bir", "interval"}:
+        try:
+            n = int(float(str(interval_days or "0").replace(",", ".")))
+        except Exception:
+            n = 0
+        return f"Her {n} günde bir" if n > 0 else "Aralıklı"
     return "Tek seferlik"
+
+
+def reminder_limit_suffix(row: dict[str, Any]) -> str:
+    remaining = str(row.get("Kalan_Tekrar") or "").strip()
+    end_date = str(row.get("Bitis_Tarihi") or "").strip()
+    if remaining:
+        try:
+            n = int(float(remaining.replace(",", ".")))
+            return f", {n} tekrar kaldı"
+        except Exception:
+            pass
+    if end_date:
+        return f", {end_date} tarihine kadar"
+    return ""
 
 
 def chunks(text: str, limit: int = MSG_LIMIT) -> list[str]:
@@ -457,6 +482,15 @@ def reminder_menu() -> InlineKeyboardMarkup:
     ])
 
 
+def reminder_limit_menu() -> InlineKeyboardMarkup:
+    return kb([
+        [("Sınırsız", "rem:limit:none")],
+        [("Bitiş Tarihi Belirle", "rem:limit:enddate")],
+        [("Tekrar Sayısı Belirle", "rem:limit:count")],
+        [("Geri", "rem:add"), ("İptal", "cancel"), ("Ana Menü", "m:main")],
+    ])
+
+
 def observation_menu() -> InlineKeyboardMarkup:
     return kb([
         [("📷 Fotoğraflı Gözlem Ekle", "obs:add"), ("🤖 Fotoğrafı AI Yorumla", "obs:ai")],
@@ -472,6 +506,7 @@ def ai_menu() -> InlineKeyboardMarkup:
         [("Groq Hızlı", "ai:groq"), ("Güncel Ara", "ai:web")],
         [("İkisine de Sor", "ai:both"), ("Sesli Sor", "ai:voice")],
         [("Dosya Oku", "ai:file"), ("Dosyaya Sor", "ai:docq")],
+        [("📊 Verilerime Sor", "ai:records")],
         [("AI Kayıtlar", "ai:logs")],
         [("AI Hafızayı Temizle", "ai:clear")],
         [("🔙 Geri", "m:main")],
@@ -530,7 +565,7 @@ def date_choice_menu(prefix: str) -> InlineKeyboardMarkup:
     ]
     if prefix == "rem":
         rows.append([("Her Gün", "rem:date:daily"), ("Haftalık", "rem:date:weekly")])
-        rows.append([("Aylık", "rem:date:monthly")])
+        rows.append([("Aylık", "rem:date:monthly"), ("Her X Günde Bir", "rem:date:interval")])
     back_to = "m:history" if prefix == "histadd" else "m:compost" if prefix == "compadd" else "m:plan" if prefix == "planadd" else "m:diary" if prefix == "diary" else "m:reminder"
     rows.append([("Geri", back_to), ("İptal", "cancel"), ("Ana Menü", "m:main")])
     return kb(rows)
@@ -740,7 +775,7 @@ def init_ai() -> None:
 
 def records(sheet_name: str) -> list[dict[str, Any]]:
     cached = RECORD_CACHE.get(sheet_name)
-    if cached and monotonic() - cached[0] < 2:
+    if cached and monotonic() - cached[0] < CACHE_TTL_SECONDS:
         return [dict(row) for row in cached[1]]
     data = SHEET[sheet_name].get_all_records()
     for i, row in enumerate(data, start=2):
@@ -842,7 +877,7 @@ async def handle_plant_callback(update: Update, context: ContextTypes.DEFAULT_TY
         return
     if data == "plant:identify":
         context.user_data["flow"] = "plant_identify"
-        await edit_or_send(update, "Bitki fotoğrafını gönder. Identification API erişimin varsa tanımayı deneyeceğim.", back_cancel("m:plant_ai"))
+        await edit_or_send(update, "Bitki fotoğrafını gönder. PlantNet ile tanımayı deneyeceğim (net, yakın çekim yaprak/çiçek fotoğrafı en iyi sonucu verir).", back_cancel("m:plant_ai"))
 
 
 def find_inventory_by_row(row_number: int) -> dict[str, Any] | None:
@@ -873,6 +908,37 @@ def set_cell_by_header(sheet_name: str, row_number: int, header: str, value: Any
     RECORD_CACHE.pop(sheet_name, None)
 
 
+def _a1(row: int, col: int) -> str:
+    letters = ""
+    n = col
+    while n > 0:
+        n, remainder = divmod(n - 1, 26)
+        letters = chr(65 + remainder) + letters
+    return f"{letters}{row}"
+
+
+def set_cells_by_header(sheet_name: str, row_number: int, values: dict[str, Any]) -> None:
+    """Aynı satırdaki birden fazla hücreyi tek Sheets isteğiyle günceller (kota tasarrufu)."""
+    if not values:
+        return
+    header_row = SHEET[sheet_name].row_values(1)
+    updates = []
+    for header, value in values.items():
+        if header not in header_row:
+            SHEET[sheet_name].update_cell(1, len(header_row) + 1, header)
+            header_row.append(header)
+        col = header_row.index(header) + 1
+        updates.append({"range": _a1(row_number, col), "values": [[value]]})
+    try:
+        SHEET[sheet_name].batch_update(updates)
+    except Exception:
+        log.exception("batch_update basarisiz, tek tek deneniyor")
+        for header, value in values.items():
+            set_cell_by_header(sheet_name, row_number, header, value)
+        return
+    RECORD_CACHE.pop(sheet_name, None)
+
+
 def alert_value(key: str) -> str:
     for row in records("alerts"):
         if str(row.get("Key", "")) == key:
@@ -883,8 +949,7 @@ def alert_value(key: str) -> str:
 def set_alert_value(key: str, value: str) -> None:
     for row in records("alerts"):
         if str(row.get("Key", "")) == key:
-            set_cell_by_header("alerts", int(row["_row"]), "Value", value)
-            set_cell_by_header("alerts", int(row["_row"]), "UpdatedAt", now().isoformat(timespec="seconds"))
+            set_cells_by_header("alerts", int(row["_row"]), {"Value": value, "UpdatedAt": now().isoformat(timespec="seconds")})
             return
     append_record("alerts", ALERT_HEADERS, {"Key": key, "Value": value, "UpdatedAt": now().isoformat(timespec="seconds")})
 
@@ -931,8 +996,7 @@ def use_stock(name: str, amount: float, unit: str, op_type: str, note: str = "",
 
     new_remaining = remaining - amount
     new_used = used + amount
-    set_cell_by_header("inventory", row_number, "Kalan Miktar", format_decimal(new_remaining))
-    set_cell_by_header("inventory", row_number, "Kullanılan", format_decimal(new_used))
+    set_cells_by_header("inventory", row_number, {"Kalan Miktar": format_decimal(new_remaining), "Kullanılan": format_decimal(new_used)})
     if record_history:
         add_history(op_type, material, format_decimal(amount), unit, ph, note, date)
     return True, f"{format_decimal(new_remaining)} {item.get('Birim', unit)}", {"material": material, "row": row_number, "old_remaining": old_remaining, "amount": amount, "unit": unit}
@@ -1320,6 +1384,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if data == "ai:docq":
         context.user_data["flow"] = "ai_docq"
         await edit_or_send(update, "Kaydedilmiş dosyalarla ilgili sorunu yaz.", back_cancel("m:ai"))
+        return
+    if data == "ai:records":
+        context.user_data["flow"] = "ai_records"
+        await edit_or_send(update, "Stok, geçmiş, pH, plan, sorun, esans, günlük ve hatırlatma kayıtlarına bakarak cevap vereceğim. Sorunu yaz.\n\nÖrn: bu ay en çok neyi kullandım, teneke 3'ün son pH'ı ne, açık sorun var mı", back_cancel("m:ai"))
         return
     if data == "ai:logs":
         await edit_or_send(update, "AI kayıtları", ai_logs_menu())
@@ -2397,6 +2465,17 @@ async def handle_report_callback(update: Update, context: ContextTypes.DEFAULT_T
         await edit_or_send(update, "Malzeme adını yaz veya seç:", inventory_buttons("reportstock"))
 
 
+async def prompt_reminder_next_step(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    draft = context.user_data.setdefault("draft", {})
+    repeat = str(draft.get("repeat", "tek")).strip().casefold()
+    if repeat in {"tek", ""}:
+        context.user_data["flow"] = "rem_text"
+        await edit_or_send(update, "Hatırlatma metnini yaz:", back_cancel("rem:add"))
+        return
+    context.user_data.pop("flow", None)
+    await edit_or_send(update, "Bu tekrarlı hatırlatma için bir sınır belirlemek ister misin?", reminder_limit_menu())
+
+
 async def handle_reminder_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, data: str) -> None:
     if data == "rem:add":
         context.user_data["flow"] = "rem_date"
@@ -2410,7 +2489,7 @@ async def handle_reminder_callback(update: Update, context: ContextTypes.DEFAULT
             return
         text = "Bekleyen Hatırlatmalar\n\n"
         for row in rows:
-            text += f"ID {row_id_text(row)} - {row.get('Tarih', '-')} {row.get('Saat', '-')} ({repeat_label(row)}): {row.get('Metin', '-')}\n"
+            text += f"ID {row_id_text(row)} - {row.get('Tarih', '-')} {row.get('Saat', '-')} ({repeat_label(row)}{reminder_limit_suffix(row)}): {row.get('Metin', '-')}\n"
         await edit_or_send(update, text, reminder_menu())
         return
     if data == "rem:delete":
@@ -2432,6 +2511,10 @@ async def handle_reminder_callback(update: Update, context: ContextTypes.DEFAULT
         if choice == "monthly":
             await edit_or_send(update, "Her ayın kaçıncı günü hatırlatayım?", monthday_menu())
             return
+        if choice == "interval":
+            context.user_data["flow"] = "rem_interval_days"
+            await edit_or_send(update, "Kaç günde bir hatırlatayım? Örn: 3", back_cancel("rem:add"))
+            return
         draft = context.user_data.setdefault("draft", {})
         if choice == "daily":
             draft["date"] = today_str()
@@ -2448,8 +2531,22 @@ async def handle_reminder_callback(update: Update, context: ContextTypes.DEFAULT
             await edit_or_send(update, "Saati yaz. Örn: 17:30", back_cancel("rem:add"))
             return
         context.user_data.setdefault("draft", {})["time"] = choice
-        context.user_data["flow"] = "rem_text"
-        await edit_or_send(update, "Hatırlatma metnini yaz:", back_cancel("rem:add"))
+        await prompt_reminder_next_step(update, context)
+        return
+    if data.startswith("rem:limit:"):
+        choice = data.rsplit(":", 1)[1]
+        if choice == "none":
+            context.user_data["flow"] = "rem_text"
+            await edit_or_send(update, "Hatırlatma metnini yaz:", back_cancel("rem:add"))
+            return
+        if choice == "enddate":
+            context.user_data["flow"] = "rem_limit_enddate"
+            await edit_or_send(update, "Hangi tarihe kadar tekrarlansın? Örn: 30-09-2026", back_cancel("rem:add"))
+            return
+        if choice == "count":
+            context.user_data["flow"] = "rem_limit_count"
+            await edit_or_send(update, "Kaç kere tekrarlansın? Örn: 5", back_cancel("rem:add"))
+            return
         return
     if data.startswith("rem:cal:"):
         _, _, year_s, month_s = data.split(":")
@@ -2552,6 +2649,43 @@ async def send_backup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     await message.reply_document(InputFile(buffer, filename=f"yasemin_yedek_{today_str()}.zip"), caption="Yedek hazır.")
 
 
+def schedule_next_reminder(row: dict[str, Any], next_due: datetime) -> None:
+    """Tekrarlı bir hatırlatma gönderildikten sonra bir sonraki tarihi ayarlar; Bitis_Tarihi
+    veya Kalan_Tekrar sınırına ulaşıldıysa tekrarı durdurup Durum'u gönderildi yapar."""
+    row_num = int(row["_row"])
+    remaining_raw = str(row.get("Kalan_Tekrar") or "").strip()
+    if remaining_raw:
+        try:
+            remaining = int(float(remaining_raw.replace(",", "."))) - 1
+        except Exception:
+            remaining = None
+        if remaining is not None:
+            if remaining <= 0:
+                set_cells_by_header("reminders", row_num, {"Durum": "gönderildi", "Kalan_Tekrar": "0"})
+                return
+            end_date_check = parse_date(str(row.get("Bitis_Tarihi") or ""), allow_words=False)
+            if end_date_check:
+                try:
+                    end_dt = datetime.strptime(end_date_check, DATE_FMT)
+                except Exception:
+                    end_dt = None
+                if end_dt and next_due.date() > end_dt.date():
+                    set_cells_by_header("reminders", row_num, {"Durum": "gönderildi", "Kalan_Tekrar": str(remaining)})
+                    return
+            set_cells_by_header("reminders", row_num, {"Tarih": next_due.strftime(DATE_FMT), "Durum": "bekliyor", "Kalan_Tekrar": str(remaining)})
+            return
+    end_date = parse_date(str(row.get("Bitis_Tarihi") or ""), allow_words=False)
+    if end_date:
+        try:
+            end_dt = datetime.strptime(end_date, DATE_FMT)
+        except Exception:
+            end_dt = None
+        if end_dt and next_due.date() > end_dt.date():
+            set_cells_by_header("reminders", row_num, {"Durum": "gönderildi"})
+            return
+    set_cells_by_header("reminders", row_num, {"Tarih": next_due.strftime(DATE_FMT), "Durum": "bekliyor"})
+
+
 async def reminder_worker(app: Application) -> None:
     while True:
         try:
@@ -2571,22 +2705,31 @@ async def reminder_worker(app: Application) -> None:
                         next_due = due
                         while next_due <= current:
                             next_due += timedelta(days=1)
-                        set_cell_by_header("reminders", int(row["_row"]), "Tarih", next_due.strftime(DATE_FMT))
-                        set_cell_by_header("reminders", int(row["_row"]), "Durum", "bekliyor")
+                        schedule_next_reminder(row, next_due)
                     elif repeat in {"haftalık", "haftalik", "weekly"}:
                         next_due = due
                         while next_due <= current:
                             next_due += timedelta(days=7)
-                        set_cell_by_header("reminders", int(row["_row"]), "Tarih", next_due.strftime(DATE_FMT))
-                        set_cell_by_header("reminders", int(row["_row"]), "Durum", "bekliyor")
+                        schedule_next_reminder(row, next_due)
                     elif repeat in {"aylık", "aylik", "monthly"}:
                         try:
                             monthday = int(row.get("Ay_Gunu") or due.day)
                         except Exception:
                             monthday = due.day
                         next_due = next_monthly_after(due, monthday, current)
-                        set_cell_by_header("reminders", int(row["_row"]), "Tarih", next_due.strftime(DATE_FMT))
-                        set_cell_by_header("reminders", int(row["_row"]), "Durum", "bekliyor")
+                        schedule_next_reminder(row, next_due)
+                    elif repeat in {"aralık", "aralik", "gunde_bir", "interval"}:
+                        try:
+                            interval_days = int(float(str(row.get("Gun_Araligi") or "0").replace(",", ".")))
+                        except Exception:
+                            interval_days = 0
+                        if interval_days <= 0:
+                            set_cell_by_header("reminders", int(row["_row"]), "Durum", "gönderildi")
+                        else:
+                            next_due = due
+                            while next_due <= current:
+                                next_due += timedelta(days=interval_days)
+                            schedule_next_reminder(row, next_due)
                     else:
                         set_cell_by_header("reminders", int(row["_row"]), "Durum", "gönderildi")
                     log.info("Hatırlatma gönderildi: ID %s", row_id_text(row))
@@ -2595,6 +2738,28 @@ async def reminder_worker(app: Application) -> None:
         except Exception:
             log.exception("Hatırlatma kontrolünde hata")
         await asyncio.sleep(30)
+
+
+def create_stock_reminder(item: dict[str, Any], remaining: float, chat_id: str) -> None:
+    """Kritik stok tespit edildiğinde, uyarı mesajına ek olarak bir hatırlatma kaydı oluşturur
+    (30 dk sonrası için) böylece Bugün ekranında ve Bekleyen Hatırlatmalar listesinde de görünür."""
+    due_dt = now() + timedelta(minutes=30)
+    item_id = next_id("reminders")
+    append_record("reminders", REMINDER_HEADERS, {
+        "ID": item_id,
+        "Tarih": due_dt.strftime(DATE_FMT),
+        "Saat": due_dt.strftime("%H:%M"),
+        "Metin": f"Kritik stok: {item.get('Malzeme / Alet','-')} ({format_decimal(remaining)} {item.get('Birim','')}). Tedarik/ekleme yapmayı unutma.",
+        "Durum": "bekliyor",
+        "Chat_ID": chat_id,
+        "Tekrar": "tek",
+        "Hafta_Gunu": "",
+        "Ay_Gunu": "",
+        "Gun_Araligi": "",
+        "Bitis_Tarihi": "",
+        "Kalan_Tekrar": "",
+        "CreatedAt": now().isoformat(timespec="seconds"),
+    })
 
 
 async def stock_alert_worker(app: Application) -> None:
@@ -2624,6 +2789,10 @@ async def stock_alert_worker(app: Application) -> None:
                             chat_id=int(chat_id),
                             text=f"Kritik stok uyarısı\n\nID {item_id} - {item.get('Malzeme / Alet','-')}: {format_decimal(remaining)} {item.get('Birim','')}",
                         )
+                        try:
+                            create_stock_reminder(item, remaining, chat_id)
+                        except Exception:
+                            log.exception("Kritik stok hatırlatması oluşturulamadı: ID %s", item_id)
                 new_sent = sent.intersection(current_critical)
                 if new_sent != sent:
                     set_alert_value("stock_sent_v2", ",".join(sorted(new_sent)))
@@ -2634,6 +2803,7 @@ async def stock_alert_worker(app: Application) -> None:
 
 async def post_init(app: Application) -> None:
     app.create_task(reminder_worker(app))
+    app.create_task(stock_alert_worker(app))
 
 
 async def ask_ai(question: str, user_id: int, context: ContextTypes.DEFAULT_TYPE) -> str:
@@ -2762,6 +2932,69 @@ async def answer_from_docs(question: str, context: ContextTypes.DEFAULT_TYPE) ->
     return await ask_groq(prompt, context)
 
 
+def build_records_context() -> str:
+    parts: list[str] = []
+
+    inv = records("inventory")
+    parts.append("STOK (ID - Malzeme: Kalan Miktar Birim | Kategori):")
+    for item in inv[:250]:
+        parts.append(f"{row_id_text(item)} - {item.get('Malzeme / Alet','-')}: {item.get('Kalan Miktar','-')} {item.get('Birim','')} | {item.get('Kategori','-')}")
+
+    hist = records("history")[-150:]
+    parts.append("\nSON GEÇMİŞ İŞLEMLER (Tarih - İşlem - Malzeme Miktar Birim - pH - Not):")
+    for row in hist:
+        parts.append(f"{row.get('Tarih','-')} - {row.get('Islem','-')} - {history_material(row)} {history_amount(row)} {history_unit(row)} - pH {row.get('pH','-')} - {row.get('Not','')}")
+
+    comp = records("Kompost")[-80:]
+    parts.append("\nKOMPOST İŞLEMLERİ:")
+    for row in comp:
+        parts.append(compost_row_text(row).replace("\n", " | "))
+
+    ph = records("ph_records")[-150:]
+    parts.append("\npH KAYITLARI (Teneke - Tarih - pH - Not):")
+    for row in ph:
+        parts.append(f"{row.get('Teneke_No','-')} - {row.get('Tarih','-')} - pH {row.get('pH','-')} - {row.get('Not','')}")
+
+    plans = [r for r in records("plans") if str(r.get("Durum", "bekliyor")).strip().casefold() == "bekliyor"]
+    parts.append("\nBEKLEYEN PLANLAR:")
+    for row in plans:
+        parts.append(plan_row_text(row).replace("\n", " | "))
+
+    issues = [r for r in records("issues") if str(r.get("Durum", "açık")).strip().casefold() == "açık"]
+    parts.append("\nAÇIK SORUNLAR:")
+    for row in issues:
+        parts.append(issue_text(row).replace("\n", " | "))
+
+    ess = [r for r in records("essences") if str(r.get("Durum", "aktif")).strip().casefold() == "aktif"]
+    parts.append("\nAKTİF ESANSLAR:")
+    for row in ess:
+        parts.append(f"{row.get('Baslangic','-')}: {row.get('Cicek','-')} + {row.get('Yag','-')} | Kap {row.get('Kap','-')} | Gün {row.get('Gun','-')}")
+
+    diary = records("diary")[-40:]
+    parts.append("\nSON GÜNLÜK NOTLARI:")
+    for row in diary:
+        parts.append(f"{row.get('Tarih','-')}: {row.get('Not','')}")
+
+    reminders = [r for r in records("reminders") if str(r.get("Durum", "bekliyor")).strip().casefold() == "bekliyor"]
+    parts.append("\nBEKLEYEN HATIRLATMALAR:")
+    for row in reminders:
+        parts.append(f"{row.get('Tarih','-')} {row.get('Saat','-')} ({repeat_label(row)}{reminder_limit_suffix(row)}): {row.get('Metin','-')}")
+
+    return "\n".join(parts)
+
+
+async def ask_about_records(question: str, context: ContextTypes.DEFAULT_TYPE) -> str:
+    data_text = build_records_context()[:14000]
+    prompt = (
+        "Aşağıda bir bahçe/tarım takip sisteminin güncel kayıtları var. Bu kayıtlara dayanarak Türkçe, "
+        "net ve kısa cevap ver. Kayıtlarda olmayan bir bilgiyi uydurma; bulamadıysan açıkça söyle.\n\n"
+        f"Soru: {question}\n\nKayıtlar:\n{data_text}"
+    )
+    if GEMINI_API_KEY:
+        return await ask_gemini(prompt, context)
+    return await ask_groq(prompt, context)
+
+
 async def perenual_get(path: str, params: dict[str, Any]) -> dict[str, Any]:
     if not PERENUAL_API_KEY:
         raise RuntimeError("Perenual API anahtarı eksik. Render Variables içine PERENUAL_API_KEY eklenmeli.")
@@ -2814,22 +3047,57 @@ async def plant_care(query: str, context: ContextTypes.DEFAULT_TYPE) -> str:
 
 
 async def identify_plant(image_bytes: bytes, note: str, context: ContextTypes.DEFAULT_TYPE) -> str:
-    key = PERENUAL_IDENTIFY_API_KEY or PERENUAL_API_KEY
-    if not key:
-        return "Perenual plant identification anahtarı eksik. Render Variables içine PERENUAL_IDENTIFY_API_KEY eklenince çalışır."
-    payload = {"images": [base64.b64encode(image_bytes).decode("ascii")], "organs": ["leaf"], "note": note}
+    if not PLANTNET_API_KEY:
+        return "PlantNet API anahtarı eksik. Render Variables içine PLANTNET_API_KEY eklenince çalışır."
+    url = f"https://my-api.plantnet.org/v2/identify/{PLANTNET_PROJECT}"
     try:
         response = await asyncio.to_thread(
-            lambda: requests.post("https://perenual.com/api/identify", params={"key": key}, json=payload, timeout=60)
+            lambda: requests.post(
+                url,
+                params={"api-key": PLANTNET_API_KEY},
+                files=[("images", ("photo.jpg", image_bytes, "image/jpeg"))],
+                data={"organs": "auto"},
+                timeout=60,
+            )
         )
+        if response.status_code == 404:
+            return "PlantNet bu fotoğrafta bitki bulamadı. Daha net, yakından ve iyi ışıklı bir fotoğraf dene (yaprak veya çiçek yakın çekimi en iyi sonucu verir)."
+        if response.status_code in (400, 401, 403):
+            return f"PlantNet API hatası ({response.status_code}): API anahtarını kontrol et. Detay: {response.text[:300]}"
         response.raise_for_status()
         data = response.json()
-        prompt = f"Bu bitki tanıma sonucunu Türkçe özetle ve bakım önerisi ver:\n{json.dumps(data, ensure_ascii=False)[:8000]}"
-        if GEMINI_API_KEY:
-            return await ask_gemini(prompt, context)
-        return json.dumps(data, ensure_ascii=False)[:2000]
     except Exception as exc:
-        return f"Bitki tanıma API hatası: {exc}"
+        return f"PlantNet API hatası: {exc}"
+
+    results = data.get("results", [])[:5]
+    if not results:
+        return "Bitki tanınamadı. Farklı bir fotoğraf dene (yaprak/çiçek yakın çekimi daha iyi sonuç verir)."
+
+    lines = ["Bitki Tanıma Sonuçları (PlantNet)\n"]
+    for i, item in enumerate(results, start=1):
+        species = item.get("species", {}) or {}
+        score = (item.get("score") or 0) * 100
+        sci_name = species.get("scientificNameWithoutAuthor") or "-"
+        common_names = species.get("commonNames") or []
+        common = ", ".join(common_names[:3]) if common_names else "-"
+        family = (species.get("family") or {}).get("scientificNameWithoutAuthor", "-")
+        lines.append(f"{i}. {sci_name} (%{score:.0f} eşleşme)\n   Yaygın adlar: {common}\n   Familya: {family}")
+    raw_text = "\n".join(lines)
+
+    top_species = (results[0].get("species") or {})
+    top_name = top_species.get("scientificNameWithoutAuthor") or "-"
+    top_common = ", ".join((top_species.get("commonNames") or [])[:3]) or top_name
+
+    if GEMINI_API_KEY or GROQ_API_KEY:
+        prompt = (
+            f"Bir bitki tanıma API'sinden (PlantNet) şu sonuç çıktı. En olası tür: {top_name} ({top_common}). "
+            f"Kullanıcının notu: {note or '-'}. "
+            "Bu bitki için Türkçe, kısa ve pratik bakım tavsiyesi ver (sulama, ışık, toprak, dikkat edilmesi gerekenler). "
+            "Tanı kesin değilse (skor düşükse) bunu belirt, kesin teşhis gibi konuşma."
+        )
+        ai_note = await ask_gemini(prompt, context) if GEMINI_API_KEY else await ask_groq(prompt, context)
+        return f"{raw_text}\n\nAI Bakım Tavsiyesi:\n{ai_note}"
+    return raw_text
 
 
 async def ask_gemini(question: str, context: ContextTypes.DEFAULT_TYPE) -> str:
@@ -3006,6 +3274,15 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         for part in chunks(f"Dosya Hafızası:\n\n{answer}"):
             await update.effective_message.reply_text(part)
         await update.effective_message.reply_text("Başka bir dosya sorusu yazabilir veya geri dönebilirsin.", reply_markup=back_cancel("m:ai"))
+        return
+    if flow == "ai_records":
+        await update.effective_message.chat.send_action(ChatAction.TYPING)
+        answer = await ask_about_records(text, context)
+        log_ai("ai_gemini_logs" if GEMINI_API_KEY else "ai_groq_logs", update.effective_user.id, "kayit_sorgu", text, answer)
+        for part in chunks(f"Kayıtlara Göre:\n\n{answer}"):
+            await update.effective_message.reply_text(part)
+        context.user_data["flow"] = "ai_records"
+        await update.effective_message.reply_text("Başka bir soru yazabilir veya AI menüsüne dönebilirsin.", reply_markup=back_cancel("m:ai"))
         return
     if flow == "ai_both":
         await update.effective_message.chat.send_action(ChatAction.TYPING)
@@ -3639,9 +3916,11 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         wanted = context.user_data["draft"]["id"]
         for row in records("issues"):
             if row_id_text(row) == wanted:
-                set_cell_by_header("issues", int(row["_row"]), "Durum", "kapalı")
-                set_cell_by_header("issues", int(row["_row"]), "ClosedAt", now().isoformat(timespec="seconds"))
-                set_cell_by_header("issues", int(row["_row"]), "Not", f"{row.get('Not','')}\n[KAPANIŞ {today_str()}] {text}".strip())
+                set_cells_by_header("issues", int(row["_row"]), {
+                    "Durum": "kapalı",
+                    "ClosedAt": now().isoformat(timespec="seconds"),
+                    "Not": f"{row.get('Not','')}\n[KAPANIŞ {today_str()}] {text}".strip(),
+                })
                 context.user_data.clear()
                 await update.effective_message.reply_text("Sorun kapatıldı.", reply_markup=issue_menu())
                 return
@@ -3761,19 +4040,53 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         context.user_data["draft"]["repeat"] = "tek"
         await update.effective_message.reply_text("Saat seç:", reply_markup=time_choice_menu())
         return
+    if flow == "rem_interval_days":
+        try:
+            interval_days = int(text.strip())
+            if interval_days <= 0:
+                raise ValueError
+        except Exception:
+            await update.effective_message.reply_text("Gün sayısı pozitif bir tam sayı olmalı. Örn: 3", reply_markup=back_cancel("rem:add"))
+            return
+        draft = context.user_data.setdefault("draft", {})
+        draft["date"] = today_str()
+        draft["repeat"] = "aralik"
+        draft["interval_days"] = interval_days
+        await update.effective_message.reply_text("Saat seç:", reply_markup=time_choice_menu())
+        return
     if flow == "rem_custom_time":
         time = parse_time(text)
         if not time:
             await update.effective_message.reply_text("Saat anlaşılamadı. Örn: 17:30", reply_markup=back_cancel("rem:add"))
             return
         context.user_data["draft"]["time"] = time
+        await prompt_reminder_next_step(update, context)
+        return
+    if flow == "rem_limit_enddate":
+        date = parse_date(text)
+        if not date:
+            await update.effective_message.reply_text("Tarih anlaşılamadı. Örn: 30-09-2026", reply_markup=back_cancel("rem:add"))
+            return
+        context.user_data["draft"]["end_date"] = date
+        context.user_data["flow"] = "rem_text"
+        await update.effective_message.reply_text("Hatırlatma metnini yaz:", reply_markup=back_cancel("rem:add"))
+        return
+    if flow == "rem_limit_count":
+        try:
+            count = int(text.strip())
+            if count <= 0:
+                raise ValueError
+        except Exception:
+            await update.effective_message.reply_text("Tekrar sayısı pozitif bir tam sayı olmalı. Örn: 5", reply_markup=back_cancel("rem:add"))
+            return
+        context.user_data["draft"]["repeat_count"] = count
         context.user_data["flow"] = "rem_text"
         await update.effective_message.reply_text("Hatırlatma metnini yaz:", reply_markup=back_cancel("rem:add"))
         return
     if flow == "rem_text":
         d = context.user_data["draft"]
         item_id = next_id("reminders")
-        append_record("reminders", REMINDER_HEADERS, {
+        payload = {
             "ID": item_id,
             "Tarih": d["date"],
             "Saat": d["time"],
@@ -3783,10 +4096,14 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             "Tekrar": d.get("repeat", "tek"),
             "Hafta_Gunu": d.get("weekday", ""),
             "Ay_Gunu": d.get("monthday", ""),
+            "Gun_Araligi": d.get("interval_days", ""),
+            "Bitis_Tarihi": d.get("end_date", ""),
+            "Kalan_Tekrar": d.get("repeat_count", ""),
             "CreatedAt": now().isoformat(timespec="seconds"),
-        })
+        }
+        append_record("reminders", REMINDER_HEADERS, payload)
         context.user_data.clear()
-        tekrar = repeat_label(d.get("repeat", "tek"))
+        tekrar = repeat_label(payload)
         await update.effective_message.reply_text(f"Hatırlatma eklendi. ID {item_id} - {d['date']} {d['time']} ({tekrar})", reply_markup=reminder_menu())
         return
     if flow == "rem_delete":
