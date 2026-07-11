@@ -148,85 +148,35 @@ Tekrarlı hatırlatmalar (günlük/haftalık/aylık/aralıklı) artık sonsuza k
 - Bir form/kayıt akışının ortasındaysan (ör. stok ekleme) sesli mesaj bu akışa karışmıyor, hiçbir şey yapmıyor — sadece akış boşken veya zaten "Sesli Sor" menüsündeyken çalışıyor.
 - Groq ayarı (`GROQ_API_KEY`) yoksa sesli mesajlar işlenemez, bu durumda kısa bir bilgi mesajı gösteriliyor.
 
-## Render'a Eklenmesi Gereken Değişkenler
+## 23. Bug düzeltmesi: AI sohbet hafızası "kirleniyordu", alakasız JSON cevabı geliyordu
 
-| Değişken | Zorunlu mu | Açıklama |
-|---|---|---|
-| `PLANTNET_API_KEY` | Evet (bitki tanıma + hastalık tespiti için) | PlantNet'ten aldığın anahtar |
-| `PLANTNET_PROJECT` | Hayır (opsiyonel) | Varsayılan `all`; istersen `weurope` gibi bölgesel flora setleri kullanılabilir |
+- **Sorun (senin test ettiğin bug):** "Sulama yaptım" yazınca bot düz cevap yerine `{"action": "bilinmiyor"}` gibi ham JSON gönderiyordu; benzer şekilde başka bazı yerlerde de beklenmedik JSON/teknik metin görülüyordu.
+- **Kök sebep:** Doğal dille otomatik kayıt özelliği (madde 16), arka planda AI'a "bu cümleyi şu JSON şablonlarından birine çevir" diye bir talimat gönderiyor. Bu iç/teknik istek, kodun bir hatası yüzünden **senin gerçek AI sohbet geçmişinle aynı hafızaya** kaydediliyordu. Sonuç: bu JSON talimatı bir kere hafızaya girdiğinde, ondan sonraki gerçek AI cevapların da JSON formatında gelmeye başlıyordu (AI kendi önceki "sadece JSON döndür" talimatını hafızada görüp onu taklit ediyordu).
+- **Düzeltme:** Artık böyle iç/teknik AI çağrıları (doğal dil kayıt ayrıştırma, dosya özeti, "Verilerime Sor", günlük AI özeti, bitki bakım tavsiyesi, güncel arama özeti gibi tek seferlik işlemler) tamamen ayrı, hafızasız bir kanaldan gidiyor — artık senin gerçek AI Sohbet geçmişine hiç dokunmuyorlar. AI Sohbet (Agnes/Gemini/Groq/İkisine de Sor/Sesli Sor) ve Bitki AI Tavsiye ekranları hâlâ eskisi gibi hafızalı/sohbet tarzı çalışmaya devam ediyor.
+- Bu, hem "Sulama yaptım" gibi menü dışı serbest mesajlarda hem de (dolaylı olarak) o sıradaki başka AI cevaplarında gördüğün tutarsız/JSON çıktısı sorununu kökten çözüyor.
 
-Diğer tüm değişiklikler (hatırlatma sınırları, kritik stok bildirimi, AI kayıt sorgusu, performans iyileştirmeleri, hava durumu entegrasyonu, haftalık yedekleme) mevcut environment değişkenlerinle otomatik çalışır, ek bir şey eklemene gerek yok.
-- Kritik stok kalıcı olarak görülmek istenirse zaten "Bugün" ekranı ve "🚨 Kritik Stok" butonu her açıldığında güncel listeyi gösteriyor — bildirim spam'i olmadan.
+## 24. Bug düzeltmesi: pH/Stok grafiği bazen donma yapıyor, bazen metne dönüyordu
 
-## 8. PlantNet ile hastalık/zararlı tespiti
+- **Sorun:** Grafik oluşturulurken bot genel olarak "takılıyor", bazen grafik yerine eski "Son 10 Kullanım" metnine dönüyordu.
+- **Kök sebep:** Grafik çizimi (matplotlib) senkron/bloklayan bir işlemdi ve doğrudan botun ana döngüsünde çalışıyordu. Bu süre boyunca (özellikle ilk çalıştırmada yazı tipi önbelleği kurulurken birkaç saniye sürebiliyor) **botun tamamı** — diğer mesajların işlenmesi, hatırlatma kontrolü, her şey — donuyordu. Bu gecikme bazen bir zaman aşımına yol açıp grafik başarısız gibi görünmesine ve metne düşülmesine sebep oluyordu.
+- **Düzeltme:** Grafik çizimi artık ayrı bir arka plan iş parçacığında (thread) çalışıyor, bot donmuyor, diğer mesajlar/hatırlatmalar bu süreçten etkilenmiyor. Bu sayede grafik gönderimi de daha tutarlı çalışmalı (artık rastgele metne düşme olmamalı).
 
-- "📸 Fotoğrafı AI Yorumla" (Gözlem → AI Gözlem) akışına PlantNet'in ayrı hastalık/zararlı tespit API'si eklendi.
-- Gönderdiğin fotoğraf hem genel Gemini yorumundan hem de PlantNet'in `v2/diseases/identify` uç noktasından geçiyor; olası hastalık/zararlı adları ve olasılık yüzdeleriyle mevcut AI yorumuna ekleniyor.
-- Sonuç bulunamazsa veya API'de sorun olursa bu bölüm sessizce atlanıyor, gözlem kaydı normal şekilde devam ediyor (asla hata vermiyor).
+## 25. Bitki Ara / Bakım Bilgisi: veritabanında yoksa artık AI'a soruyor
 
-## 9. Hava durumuna göre akıllı sulama hatırlatıcı
+- **Sorun:** "🔎 Bitki Ara" ve "📋 Bakım Bilgisi" (Bitki AI menüsü) sadece Perenual adlı bir bitki veritabanına bakıyordu. Bu veritabanı sınırlı olduğu için "Jasmine Sambac Grand Duke of Tuscany" gibi spesifik bir çeşit/kültivar aratıldığında "Bitki bulunamadı" dönüyordu.
+- **Düzeltme:** Perenual'da sonuç bulunamazsa (veya `PERENUAL_API_KEY` hiç tanımlı değilse) artık otomatik olarak Gemini/Groq'a "bu bitkiyi tanıyor musun" diye soruluyor ve AI'ın genel bilgisinden Türkçe bir tanıtım/bakım tavsiyesi geliyor. Cevabın başında "(Perenual veritabanında bulunamadı, AI bilgisiyle cevaplandı)" notu olacak ki kaynağı bilesin. AI de tanımıyorsa bunu açıkça söylemesi isteniyor, uydurmuyor.
+- Not: Bu, fotoğrafla bitki tanıma (PlantNet, madde 6) özelliğinden ayrı — bu madde sadece isimle arama/bakım sorgusu içindir.
 
-- Hava durumunu (📍Hava Durumu menüsünden) hangi şehir için sorgularsan, o şehir artık "bahçe şehri" olarak otomatik hatırlanıyor.
-- Metninde "sula" geçen bir hatırlatma (ör. "Sulama yap", "Sulamayı unutma") tetiklendiğinde, bahçe şehrin için bugün yağmur ihtimali yüksekse mesaja otomatik bir not ekleniyor: "Bugün için yağmur bekleniyor, sulamayı erteleyebilirsin."
-- Hava durumu sorgusu başarısız olursa hatırlatma yine normal şekilde gönderiliyor — bu özellik asla hatırlatmanın gitmesini engellemiyor, sadece bilgi ekliyor.
+## 26. AI menüsü daha düzenli gruplandı
 
-## 10. Haftalık otomatik yedekleme
+- Önceden "🤖 AI Sor" menüsü tek ekranda 7 satır, birbirinden çok farklı 10 seçenek içeriyordu (sohbet, arama, dosya, kayıt sorgusu, log, hafıza temizleme hepsi karışıktı).
+- Artık 4 net kategoriye ayrıldı: **💬 AI Sohbet** (Agnes/Gemini/Groq/İkisine de Sor/Sesli Sor), **🔎 Arama & Dosya** (Güncel Ara, Dosya Oku, Dosyaya Sor), **📊 Verilerime Sor** (tek başına, en sık kullanılan), **⚙️ AI Ayarları** (AI Kayıtlar, AI Hafızayı Temizle).
+- Hiçbir özellik kaldırılmadı/taşınmadı, sadece daha az tıklamayla ve daha anlaşılır şekilde gruplandı.
 
-- Daha önce yedek almak için elle "💾 Yedekle" butonuna basman gerekiyordu.
-- Artık her Pazartesi sabah 08:00 civarında zip yedeği otomatik olarak Telegram'a gönderiliyor, elle bir şey yapmana gerek yok.
-- Aynı hafta içinde tekrar göndermemesi için hangi haftanın yedeğinin gönderildiği ayrıca takip ediliyor.
+## 27. Hava durumu / sulama notu nasıl çalıştığı netleştirildi
 
-## 11. AI için kalıcı hafıza
-
-- Önceden Agnes/Gemini/Groq sohbet hafızası sadece `context.user_data` içindeydi; bot yeniden başladığında veya sen herhangi bir menüye dönüp AI menüsüne tekrar girdiğinde tamamen siliniyordu.
-- Artık hafıza boşsa (ilk mesaj, bot restart olmuş, ya da menüden çıkıp girmişsin), o AI için kalıcı olarak Sheets'e kaydedilen son ~6 soru-cevabı (`ai_agnes_logs`, `ai_gemini_logs`, `ai_groq_logs` sayfalarından, sadece senin kendi geçmişin) otomatik geri yükleniyor.
-- "AI Hafızayı Temizle" butonuna basarsan bu artık gerçekten temizliyor — bir sonraki soruda eski hafıza tekrar geri yüklenmiyor (öncesinde bu küçük bir çelişkiye yol açacaktı, düzelttim).
-- Bu değişiklik sadece "AI Sor" ekranlarını (Agnes/Gemini/Groq/İkisine de Sor) etkiliyor; reçete önerisi, bitki bakım tavsiyesi, günlük özeti gibi tek seferlik yardımcı AI çağrılarına karışmıyor.
-
-## 12. Bot hata/çökme bildirimi
-
-- Önceden bir hata olduğunda sadece o an mesaj yazan kişi "bir hata oldu" görüyordu, sen (bot sahibi) haberdar olmuyordun; arka plan görevlerindeki (hatırlatma kontrolü, kritik stok kontrolü, haftalık yedekleme) hatalar ise sadece sunucu loglarında kalıyordu.
-- Artık hem kullanıcı etkileşimlerinden gelen hatalarda hem de arka plan görevlerindeki hatalarda, kayıtlı sohbetine (aynı `stock_chat_id`) kısa bir uyarı mesajı gidiyor: "⚠️ Bot hatası (kaynak) — hata türü ve detay".
-- Aynı hata art arda tekrar ederse spam olmasın diye, aynı kaynak+hata türü için 10 dakikada en fazla 1 bildirim gönderiliyor.
-
-## 13. Mevsimsel (yıllık tekrar) hatırlatma
-
-- Hatırlatma tarihi seçim ekranına "🌱 Her Yıl (Mevsimsel)" seçeneği eklendi.
-- Seçince gün-ay formatında bir tarih yazman isteniyor (ör. 15-03 → her yıl 15 Mart), ardından diğer tekrar tipleriyle aynı akış: saat seçimi, isteğe bağlı bitiş tarihi/tekrar sayısı sınırı.
-- Böylece "her ilkbahar gübreleme", "her sonbahar budama" gibi mevsimsel/yıllık görevleri tek seferde kurup her yıl otomatik hatırlatma alabilirsin.
-- 29 Şubat gibi artık yıl kenar durumları da doğru şekilde bir sonraki uygun tarihe (28 Şubat) yuvarlanıyor.
-
-## 14. Hızlı arama
-
-- AI kullanmadan, doğrudan stok, geçmiş, kompost, plan, alan, sorun, günlük, reçete, esans, gözlem ve hatırlatma kayıtlarında anahtar kelime araması yapan bir özellik eklendi.
-- Anında sonuç veriyor, AI kotası harcamıyor — hızlı bir "şunu nerede kaydetmiştim" sorgusu için ideal.
-- **Nasıl kullanılır:** Sistem menüsü → 🔍 Hızlı Arama butonuna dokun, aramak istediğin kelimeyi yaz. (Komut yazmak isteyenler için `/ara kelime` de hâlâ çalışıyor ama artık zorunlu değil.)
-
-## 15. Her zaman erişilebilir Menü butonu (komut yazmadan)
-
-- Sohbetin altında, klavyenin hemen üstünde artık **🏠 Menü** adında sabit bir buton var — bu buton hiçbir zaman kaybolmuyor, hangi ekranda/akışta olursan ol her zaman görünür durumda.
-- Bu butona dokunduğun an, o an ne yapıyor olursan ol (bir form dolduruyor, bir soruya cevap yazıyor olsan bile), doğrudan ana menüye dönüyorsun.
-- Artık `/start` veya `/menu` yazmana hiç gerek yok — botu ilk açtığında Telegram zaten otomatik bir "BAŞLAT" butonu gösteriyor (dokunuşluk), ondan sonra her şey bu sabit Menü butonuyla buton bazlı devam ediyor.
-- Not: Malzeme adı, miktar, not, tarih gibi form alanlarına hâlâ yazman gerekiyor (bunlar serbest metin olduğu için buton haline getirilemez) — ama menüler arası gezinme ve komutlar tamamen buton tabanlı.
-
-## 16. Doğal dille otomatik kayıt (onaylı)
-
-- Artık hiçbir menüde değilken düz bir cümle yazabilirsin, ör. "bugün 3 litre su ile sulama yaptım" veya "5 kg gübre stoğa ekledim" veya "teneke 3 pH 6.5 ölçtüm".
-- AI bunu otomatik olarak yapısal bir işleme çeviriyor ve sana bir özet gösterip **✅ Onayla / ❌ İptal** butonlarını sunuyor.
-- **Hiçbir şey senin onayın olmadan kaydedilmiyor** — AI sadece bir taslak hazırlıyor, gerçek kayıt/stok düşme işlemi sadece "Onayla" dediğinde, mevcut ve test edilmiş stok/pH fonksiyonları üzerinden yapılıyor.
-- AI ne dediğini anlayamazsa (ya da sadece sohbet ediyorsan), normal şekilde ana menü gösteriliyor, hiçbir şey bozulmuyor.
-
-## 17. Grafik/trend görselleri (yeni bağımlılık: matplotlib)
-
-- Rapor menüsüne **🔬 pH Grafiği** eklendi: bir teneke seç (veya "Tümü" ile hepsini üst üste gör), zaman içindeki pH değişimini gerçek bir çizgi grafiği (PNG resim) olarak alıyorsun.
-- Mevcut **📉 Stok Grafiği** artık gerçekten grafik çiziyor (öncesinde sadece metin listesiydi) — bir malzemenin kullanım miktarlarını zaman içinde çizgi grafiği olarak gösteriyor. Yeterli sayısal veri yoksa otomatik olarak eski metin listesine geri dönüyor, hata vermiyor.
-- **Önemli:** Bu özellik için `requirements.txt`'ye `matplotlib` eklendi — Render'da bir sonraki deploy'da bu paket otomatik kurulacak, senin bir şey yapmana gerek yok, ama bu konuşmadaki **ilk `requirements.txt` değişikliği** bu, bilgin olsun.
-
-## 18. Malzeme son kullanma tarihi takibi
-
-- Stok ekleme akışına yeni bir opsiyonel adım eklendi: not girdikten sonra "Son kullanma tarihi var mı?" diye soruyor, yoksa '-' yazıp geçebilirsin.
-- Son kullanma tarihine 14 gün ve daha az kalan (veya süresi geçmiş) malzemeler artık "📍 Bugün" ekranında ve "🧭 Durum" ekranında ayrı bir bölümde listeleniyor.
-- Kritik stok bildirimindeki gibi, süresi yaklaşan bir malzeme için **sadece bir kere** bildirim gönderiliyor (senin "sürekli bildirim istemiyorum" tercihine sadık kalarak) — tekrar tekrar hatırlatmıyor.
+- Bu özellik (madde 9) sessiz çalıştığı için fark etmek zordu. Artık 📍Hava Durumu'ndan bir şehrin **anlık** hava durumunu sorguladığında, cevabın altına şu not otomatik ekleniyor: *"(ŞEHİR artık bahçe şehrin olarak kayıtlı. Metninde 'sula' geçen bir hatırlatma zamanı geldiğinde, o gün ŞEHİR için yağmur bekleniyorsa mesaja otomatik bir uyarı notu eklenecek.)"*
+- Yani özelliğin çalışması için: (1) en az bir kere bir şehrin anlık hava durumunu sorgulamış olman, (2) hatırlatma metninde "sula" kelimesinin geçmesi, (3) o gün gerçekten yağmur ihtimali olması gerekiyor. Üçü de sağlanmazsa not sessizce eklenmiyor, hatırlatma yine normal şekilde gidiyor — bu bir hata değil, özelliğin tasarımı.
 
 ## Render'a Eklenmesi Gereken Değişkenler
 
