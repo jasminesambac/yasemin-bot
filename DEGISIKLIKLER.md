@@ -123,6 +123,111 @@ Tekrarlı hatırlatmalar (günlük/haftalık/aylık/aralıklı) artık sonsuza k
 - Son kullanma tarihine 14 gün ve daha az kalan (veya süresi geçmiş) malzemeler artık "📍 Bugün" ekranında ve "🧭 Durum" ekranında ayrı bir bölümde listeleniyor.
 - Kritik stok bildirimindeki gibi, süresi yaklaşan bir malzeme için **sadece bir kere** bildirim gönderiliyor (senin "sürekli bildirim istemiyorum" tercihine sadık kalarak) — tekrar tekrar hatırlatmıyor.
 
+## 19. Hatırlatma: kayıt anında geçmişse hemen bildirim gitmesin (bug düzeltmesi)
+
+- **Sorun:** Tekrarlı bir hatırlatma (günlük/haftalık/aylık/aralıklı/mevsimsel) kurarken seçtiğin saat o gün için zaten geçmişse (ör. "3 günde bir, saat 17:00" ama şu an saat 17:00'den sonraysa), hatırlatma kaydedildikten hemen sonra bir bildirim geliyordu — çünkü ilk tarih "bugün" olarak kaydediliyor ve arka plan kontrolcüsü bunu "zamanı geçmiş, hemen gönder" olarak görüyordu.
+- **Düzeltme:** Yeni bir `adjust_initial_reminder_date` fonksiyonu eklendi. Hatırlatma kaydedilmeden hemen önce, seçilen ilk tarih+saat şu ana göre geçmişte kalıyorsa, tekrar tipine göre (günlük/haftalık/aylık/aralıklı/mevsimsel) bir sonraki uygun tarihe otomatik ileri sarılıyor. Böylece kayıt anında asla geçmiş bir tarih/saatle kaydolmuyor, ilk bildirim gerçekten doğru zamanda geliyor.
+- Bu düzeltme, hatırlatma kaydının yapıldığı **tek** koddaki yerde uygulandığı için (kontrol edildi), tüm tekrar tiplerini kapsıyor — sadece aralıklı değil, günlük/haftalık/aylık/mevsimsel hatırlatmalarda da aynı sorun varsa artık düzeldi.
+
+## 20. Aralıklı ("Her X Günde Bir") hatırlatmaya başlangıç tarihi sorusu
+
+- Önceden "Her X Günde Bir" seçilince gün sayısını yazdıktan sonra başlangıç tarihi hep otomatik "bugün" olarak alınıyordu, sormuyordu.
+- Artık gün sayısını yazdıktan sonra "Başlangıç tarihi seç: Bugün / Yarın / Özel Tarih" soruluyor, tıpkı diğer hatırlatma tiplerindeki akışlar gibi buton tabanlı.
+- "Özel Tarih" seçilirse tarihi yazman isteniyor (ör. 14-06-2026), ardından her zamanki gibi saat seçimine geçiliyor.
+
+## 21. Menü dışı serbest mesajlarda AI direkt cevap versin
+
+- Artık hiçbir menü/form akışında değilken (yani `flow` boşken) düz bir mesaj yazdığında, önce doğal-dil otomatik kayıt (bkz. madde 16) deneniyor; o tanımıyorsa artık "Lütfen menüden bir buton seç" demek yerine mesajın **doğrudan AI cevabı** geliyor (Gemini varsa Gemini, yoksa Groq, o da yoksa Agnes).
+- Bu cevaplar da diğer AI sohbetleri gibi ilgili log sayfasına (`ai_gemini_logs` / `ai_groq_logs` / `ai_agnes_logs`) kaydediliyor, kalıcı hafıza (madde 11) burada da geçerli.
+- **Önemli — karışma yok:** Bu davranış sadece `flow` boşken (yani herhangi bir form/kayıt akışı açık değilken) devreye giriyor. Stok ekleme, hatırlatma kurma, gözlem kaydı gibi bir akışın ortasındayken yazdığın metinler her zamanki gibi o akışa gidiyor, AI araya girmiyor — bunu ayrıca kontrol ettim.
+
+## 22. Sesli mesajlarda da aynı şekilde direkt AI cevabı
+
+- Önceden sesli mesaj gönderdiğinde AI cevabı almak için önce AI menüsünden "🎙️ Sesli Sor" butonuna basman gerekiyordu.
+- Artık madde 21'deki mantığın aynısı sesli mesajlar için de geçerli: hiçbir menü/form akışı açık değilken doğrudan bir sesli mesaj gönderirsen, otomatik olarak metne çevrilip (Groq Whisper) AI cevabı veriliyor ve `ai_voice_logs`'a kaydediliyor.
+- Bir form/kayıt akışının ortasındaysan (ör. stok ekleme) sesli mesaj bu akışa karışmıyor, hiçbir şey yapmıyor — sadece akış boşken veya zaten "Sesli Sor" menüsündeyken çalışıyor.
+- Groq ayarı (`GROQ_API_KEY`) yoksa sesli mesajlar işlenemez, bu durumda kısa bir bilgi mesajı gösteriliyor.
+
+## Render'a Eklenmesi Gereken Değişkenler
+
+| Değişken | Zorunlu mu | Açıklama |
+|---|---|---|
+| `PLANTNET_API_KEY` | Evet (bitki tanıma + hastalık tespiti için) | PlantNet'ten aldığın anahtar |
+| `PLANTNET_PROJECT` | Hayır (opsiyonel) | Varsayılan `all`; istersen `weurope` gibi bölgesel flora setleri kullanılabilir |
+
+Diğer tüm değişiklikler (hatırlatma sınırları, kritik stok bildirimi, AI kayıt sorgusu, performans iyileştirmeleri, hava durumu entegrasyonu, haftalık yedekleme) mevcut environment değişkenlerinle otomatik çalışır, ek bir şey eklemene gerek yok.
+- Kritik stok kalıcı olarak görülmek istenirse zaten "Bugün" ekranı ve "🚨 Kritik Stok" butonu her açıldığında güncel listeyi gösteriyor — bildirim spam'i olmadan.
+
+## 8. PlantNet ile hastalık/zararlı tespiti
+
+- "📸 Fotoğrafı AI Yorumla" (Gözlem → AI Gözlem) akışına PlantNet'in ayrı hastalık/zararlı tespit API'si eklendi.
+- Gönderdiğin fotoğraf hem genel Gemini yorumundan hem de PlantNet'in `v2/diseases/identify` uç noktasından geçiyor; olası hastalık/zararlı adları ve olasılık yüzdeleriyle mevcut AI yorumuna ekleniyor.
+- Sonuç bulunamazsa veya API'de sorun olursa bu bölüm sessizce atlanıyor, gözlem kaydı normal şekilde devam ediyor (asla hata vermiyor).
+
+## 9. Hava durumuna göre akıllı sulama hatırlatıcı
+
+- Hava durumunu (📍Hava Durumu menüsünden) hangi şehir için sorgularsan, o şehir artık "bahçe şehri" olarak otomatik hatırlanıyor.
+- Metninde "sula" geçen bir hatırlatma (ör. "Sulama yap", "Sulamayı unutma") tetiklendiğinde, bahçe şehrin için bugün yağmur ihtimali yüksekse mesaja otomatik bir not ekleniyor: "Bugün için yağmur bekleniyor, sulamayı erteleyebilirsin."
+- Hava durumu sorgusu başarısız olursa hatırlatma yine normal şekilde gönderiliyor — bu özellik asla hatırlatmanın gitmesini engellemiyor, sadece bilgi ekliyor.
+
+## 10. Haftalık otomatik yedekleme
+
+- Daha önce yedek almak için elle "💾 Yedekle" butonuna basman gerekiyordu.
+- Artık her Pazartesi sabah 08:00 civarında zip yedeği otomatik olarak Telegram'a gönderiliyor, elle bir şey yapmana gerek yok.
+- Aynı hafta içinde tekrar göndermemesi için hangi haftanın yedeğinin gönderildiği ayrıca takip ediliyor.
+
+## 11. AI için kalıcı hafıza
+
+- Önceden Agnes/Gemini/Groq sohbet hafızası sadece `context.user_data` içindeydi; bot yeniden başladığında veya sen herhangi bir menüye dönüp AI menüsüne tekrar girdiğinde tamamen siliniyordu.
+- Artık hafıza boşsa (ilk mesaj, bot restart olmuş, ya da menüden çıkıp girmişsin), o AI için kalıcı olarak Sheets'e kaydedilen son ~6 soru-cevabı (`ai_agnes_logs`, `ai_gemini_logs`, `ai_groq_logs` sayfalarından, sadece senin kendi geçmişin) otomatik geri yükleniyor.
+- "AI Hafızayı Temizle" butonuna basarsan bu artık gerçekten temizliyor — bir sonraki soruda eski hafıza tekrar geri yüklenmiyor (öncesinde bu küçük bir çelişkiye yol açacaktı, düzelttim).
+- Bu değişiklik sadece "AI Sor" ekranlarını (Agnes/Gemini/Groq/İkisine de Sor) etkiliyor; reçete önerisi, bitki bakım tavsiyesi, günlük özeti gibi tek seferlik yardımcı AI çağrılarına karışmıyor.
+
+## 12. Bot hata/çökme bildirimi
+
+- Önceden bir hata olduğunda sadece o an mesaj yazan kişi "bir hata oldu" görüyordu, sen (bot sahibi) haberdar olmuyordun; arka plan görevlerindeki (hatırlatma kontrolü, kritik stok kontrolü, haftalık yedekleme) hatalar ise sadece sunucu loglarında kalıyordu.
+- Artık hem kullanıcı etkileşimlerinden gelen hatalarda hem de arka plan görevlerindeki hatalarda, kayıtlı sohbetine (aynı `stock_chat_id`) kısa bir uyarı mesajı gidiyor: "⚠️ Bot hatası (kaynak) — hata türü ve detay".
+- Aynı hata art arda tekrar ederse spam olmasın diye, aynı kaynak+hata türü için 10 dakikada en fazla 1 bildirim gönderiliyor.
+
+## 13. Mevsimsel (yıllık tekrar) hatırlatma
+
+- Hatırlatma tarihi seçim ekranına "🌱 Her Yıl (Mevsimsel)" seçeneği eklendi.
+- Seçince gün-ay formatında bir tarih yazman isteniyor (ör. 15-03 → her yıl 15 Mart), ardından diğer tekrar tipleriyle aynı akış: saat seçimi, isteğe bağlı bitiş tarihi/tekrar sayısı sınırı.
+- Böylece "her ilkbahar gübreleme", "her sonbahar budama" gibi mevsimsel/yıllık görevleri tek seferde kurup her yıl otomatik hatırlatma alabilirsin.
+- 29 Şubat gibi artık yıl kenar durumları da doğru şekilde bir sonraki uygun tarihe (28 Şubat) yuvarlanıyor.
+
+## 14. Hızlı arama
+
+- AI kullanmadan, doğrudan stok, geçmiş, kompost, plan, alan, sorun, günlük, reçete, esans, gözlem ve hatırlatma kayıtlarında anahtar kelime araması yapan bir özellik eklendi.
+- Anında sonuç veriyor, AI kotası harcamıyor — hızlı bir "şunu nerede kaydetmiştim" sorgusu için ideal.
+- **Nasıl kullanılır:** Sistem menüsü → 🔍 Hızlı Arama butonuna dokun, aramak istediğin kelimeyi yaz. (Komut yazmak isteyenler için `/ara kelime` de hâlâ çalışıyor ama artık zorunlu değil.)
+
+## 15. Her zaman erişilebilir Menü butonu (komut yazmadan)
+
+- Sohbetin altında, klavyenin hemen üstünde artık **🏠 Menü** adında sabit bir buton var — bu buton hiçbir zaman kaybolmuyor, hangi ekranda/akışta olursan ol her zaman görünür durumda.
+- Bu butona dokunduğun an, o an ne yapıyor olursan ol (bir form dolduruyor, bir soruya cevap yazıyor olsan bile), doğrudan ana menüye dönüyorsun.
+- Artık `/start` veya `/menu` yazmana hiç gerek yok — botu ilk açtığında Telegram zaten otomatik bir "BAŞLAT" butonu gösteriyor (dokunuşluk), ondan sonra her şey bu sabit Menü butonuyla buton bazlı devam ediyor.
+- Not: Malzeme adı, miktar, not, tarih gibi form alanlarına hâlâ yazman gerekiyor (bunlar serbest metin olduğu için buton haline getirilemez) — ama menüler arası gezinme ve komutlar tamamen buton tabanlı.
+
+## 16. Doğal dille otomatik kayıt (onaylı)
+
+- Artık hiçbir menüde değilken düz bir cümle yazabilirsin, ör. "bugün 3 litre su ile sulama yaptım" veya "5 kg gübre stoğa ekledim" veya "teneke 3 pH 6.5 ölçtüm".
+- AI bunu otomatik olarak yapısal bir işleme çeviriyor ve sana bir özet gösterip **✅ Onayla / ❌ İptal** butonlarını sunuyor.
+- **Hiçbir şey senin onayın olmadan kaydedilmiyor** — AI sadece bir taslak hazırlıyor, gerçek kayıt/stok düşme işlemi sadece "Onayla" dediğinde, mevcut ve test edilmiş stok/pH fonksiyonları üzerinden yapılıyor.
+- AI ne dediğini anlayamazsa (ya da sadece sohbet ediyorsan), normal şekilde ana menü gösteriliyor, hiçbir şey bozulmuyor.
+
+## 17. Grafik/trend görselleri (yeni bağımlılık: matplotlib)
+
+- Rapor menüsüne **🔬 pH Grafiği** eklendi: bir teneke seç (veya "Tümü" ile hepsini üst üste gör), zaman içindeki pH değişimini gerçek bir çizgi grafiği (PNG resim) olarak alıyorsun.
+- Mevcut **📉 Stok Grafiği** artık gerçekten grafik çiziyor (öncesinde sadece metin listesiydi) — bir malzemenin kullanım miktarlarını zaman içinde çizgi grafiği olarak gösteriyor. Yeterli sayısal veri yoksa otomatik olarak eski metin listesine geri dönüyor, hata vermiyor.
+- **Önemli:** Bu özellik için `requirements.txt`'ye `matplotlib` eklendi — Render'da bir sonraki deploy'da bu paket otomatik kurulacak, senin bir şey yapmana gerek yok, ama bu konuşmadaki **ilk `requirements.txt` değişikliği** bu, bilgin olsun.
+
+## 18. Malzeme son kullanma tarihi takibi
+
+- Stok ekleme akışına yeni bir opsiyonel adım eklendi: not girdikten sonra "Son kullanma tarihi var mı?" diye soruyor, yoksa '-' yazıp geçebilirsin.
+- Son kullanma tarihine 14 gün ve daha az kalan (veya süresi geçmiş) malzemeler artık "📍 Bugün" ekranında ve "🧭 Durum" ekranında ayrı bir bölümde listeleniyor.
+- Kritik stok bildirimindeki gibi, süresi yaklaşan bir malzeme için **sadece bir kere** bildirim gönderiliyor (senin "sürekli bildirim istemiyorum" tercihine sadık kalarak) — tekrar tekrar hatırlatmıyor.
+
 ## Render'a Eklenmesi Gereken Değişkenler
 
 | Değişken | Zorunlu mu | Açıklama |
