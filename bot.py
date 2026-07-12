@@ -1051,7 +1051,7 @@ async def handle_plant_callback(update: Update, context: ContextTypes.DEFAULT_TY
         context.user_data["draft"] = {"photos": [], "note": ""}
         await edit_or_send(
             update,
-            f"Bitkinin fotoğraf(lar)ını gönder (aynı bitkinin farklı açıları/yaprak/çiçek dahil olmak üzere en fazla {PHOTO_BATCH_MAX} tane olabilir - ne kadar çok olursa PlantNet o kadar doğru tanır). Bitirince '✅ Bitti' butonuna bas.",
+            f"Fotoğrafları gönder - her fotoğraf ayrı bir bitki/teneke olarak değerlendirilir ve ayrı ayrı tanınır (aynı bitkinin farklı açıları değil, ör. bahçedeki farklı tenekeler). En fazla {PHOTO_BATCH_MAX} fotoğraf gönderebilirsin. Bitirince '✅ Bitti' butonuna bas.",
             photo_batch_kb(0),
         )
         return
@@ -2585,14 +2585,13 @@ async def complete_plan(update: Update, plan_id: str) -> None:
 
 
 def observation_row_text(row: dict[str, Any]) -> str:
+    """Gözlem kaydını TAM metniyle döndürür (öncesinde AI_Yorum 250 karakterde kesiliyordu -
+    kayıt Sheets'te tamdı ama sohbette eksik/kesik görünüyordu, artık göstermiyoruz)."""
     text = f"ID {row_id_text(row)} - {row.get('Tarih', '-')}: {row.get('Kategori', 'Gözlem')}\n"
     if row.get("Not"):
         text += f"Not: {row.get('Not')}\n"
     if row.get("AI_Yorum"):
-        text += f"AI: {str(row.get('AI_Yorum'))[:250]}"
-        if len(str(row.get("AI_Yorum"))) > 250:
-            text += "..."
-        text += "\n"
+        text += f"AI: {row.get('AI_Yorum')}\n"
     return text.rstrip()
 
 
@@ -2797,7 +2796,7 @@ async def show_essences(update: Update, *, due_only: bool) -> None:
     await edit_or_send(update, text[:MSG_LIMIT], essence_menu())
 
 
-async def show_observation_page(update: Update, page: int = 0, page_size: int = 6) -> None:
+async def show_observation_page(update: Update, page: int = 0, page_size: int = 4) -> None:
     rows = records("observations")
     if not rows:
         await edit_or_send(update, "Gözlem kaydı yok.", observation_menu())
@@ -2818,7 +2817,15 @@ async def show_observation_page(update: Update, page: int = 0, page_size: int = 
     if nav:
         rows_kb.append(nav)
     rows_kb.append([("Geri", "m:observation"), ("Ana Menü", "m:main")])
-    await edit_or_send(update, text, kb(rows_kb))
+    # Tek bir sayfa bile Telegram'ın mesaj uzunluk sınırını (4096) aşabilir (ör. uzun PlantNet/AI
+    # yorumları). Bu durumda sessizce göndermeyi başaramamak yerine parçalara bölüp gönderiyoruz,
+    # nav/menü butonları en son parçaya ekleniyor.
+    parts = chunks(text)
+    for i, part in enumerate(parts):
+        if i == 0:
+            await edit_or_send(update, part, kb(rows_kb) if len(parts) == 1 else None)
+        elif update.effective_message:
+            await update.effective_message.reply_text(part, reply_markup=kb(rows_kb) if i == len(parts) - 1 else None)
 
 
 async def handle_report_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, data: str) -> None:
@@ -3786,9 +3793,10 @@ async def ask_plant_ai_groq(question: str, history: list[dict[str, str]], system
         return f"Groq hatası: {exc}"
 
 
-async def identify_plant(images: list[bytes], note: str, context: ContextTypes.DEFAULT_TYPE) -> tuple[str, str]:
-    """PlantNet ile bir veya birden fazla fotoğraftan (aynı bitkinin farklı açıları/organları)
-    tür tanıma yapar - birden fazla fotoğraf göndermek PlantNet'in doğruluğunu artırır.
+async def identify_plant(image_bytes: bytes, note: str, context: ContextTypes.DEFAULT_TYPE, include_ai_tip: bool = True) -> tuple[str, str]:
+    """PlantNet ile TEK bir fotoğraftan tür tanıma yapar. Her fotoğraf ayrı, bağımsız bir bitki/teneke
+    olarak değerlendirilir (PlantNet'in kendisi de tek istekte en fazla 5 görsele izin veriyor ve o da
+    aynı bitkinin farklı organları için - farklı bitkileri karıştırmamak için burada hep tek fotoğraf gönderiyoruz).
     (yorum_metni, en_olası_tür_adı) tuple'ı döner."""
     if not PLANTNET_API_KEY:
         return ("PlantNet API anahtarı eksik. Render Variables içine PLANTNET_API_KEY eklenince çalışır.", "")
@@ -3798,13 +3806,13 @@ async def identify_plant(images: list[bytes], note: str, context: ContextTypes.D
             lambda: requests.post(
                 url,
                 params={"api-key": PLANTNET_API_KEY},
-                files=[("images", (f"photo{i}.jpg", img, "image/jpeg")) for i, img in enumerate(images)],
-                data={"organs": ["auto"] * len(images)},
+                files=[("images", ("photo.jpg", image_bytes, "image/jpeg"))],
+                data={"organs": "auto"},
                 timeout=60,
             )
         )
         if response.status_code == 404:
-            return ("PlantNet bu fotoğraf(lar)da bitki bulamadı. Daha net, yakından ve iyi ışıklı bir fotoğraf dene (yaprak veya çiçek yakın çekimi en iyi sonucu verir).", "")
+            return ("PlantNet bu fotoğrafta bitki bulamadı. Daha net, yakından ve iyi ışıklı bir fotoğraf dene (yaprak veya çiçek yakın çekimi en iyi sonucu verir).", "")
         if response.status_code in (400, 401, 403):
             return (f"PlantNet API hatası ({response.status_code}): API anahtarını kontrol et. Detay: {response.text[:300]}", "")
         response.raise_for_status()
@@ -3816,7 +3824,7 @@ async def identify_plant(images: list[bytes], note: str, context: ContextTypes.D
     if not results:
         return ("Bitki tanınamadı. Farklı bir fotoğraf dene (yaprak/çiçek yakın çekimi daha iyi sonuç verir).", "")
 
-    lines = [f"Bitki Tanıma Sonuçları (PlantNet, {len(images)} fotoğraf)\n"]
+    lines = ["Bitki Tanıma Sonuçları (PlantNet)\n"]
     for i, item in enumerate(results, start=1):
         species = item.get("species", {}) or {}
         score = (item.get("score") or 0) * 100
@@ -3831,7 +3839,7 @@ async def identify_plant(images: list[bytes], note: str, context: ContextTypes.D
     top_name = top_species.get("scientificNameWithoutAuthor") or "-"
     top_common = ", ".join((top_species.get("commonNames") or [])[:3]) or top_name
 
-    if GEMINI_API_KEY or GROQ_API_KEY:
+    if include_ai_tip and (GEMINI_API_KEY or GROQ_API_KEY):
         prompt = (
             f"Bir bitki tanıma API'sinden (PlantNet) şu sonuç çıktı. En olası tür: {top_name} ({top_common}). "
             f"Kullanıcının notu: {note or '-'}. "
@@ -5037,7 +5045,10 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         draft["note"] = "" if text == "-" else text
         draft["photos"] = []
         context.user_data["flow"] = "obs_photo"
-        await update.effective_message.reply_text(f"Şimdi fotoğraf(lar)ı gönder (en fazla {PHOTO_BATCH_MAX} tane, hepsi tek seferde{' yorumlanacak' if draft.get('ai') else ' kaydedilecek'}).", reply_markup=back_cancel("m:observation"))
+        await update.effective_message.reply_text(
+            f"Şimdi fotoğraf(lar)ı gönder (en fazla {PHOTO_BATCH_MAX} tane, hepsi tek seferde{' yorumlanacak' if draft.get('ai') else ' kaydedilecek'}). Bitirince aşağıdaki '✅ Bitti' butonuna bas - fotoğraf gönderirken ara mesaj gelmeyecek.",
+            reply_markup=photo_batch_kb(0),
+        )
         return
     if flow == "obs_date":
         date = parse_date(text)
@@ -5079,32 +5090,41 @@ def photo_batch_kb(count: int) -> InlineKeyboardMarkup:
 
 
 async def finalize_plant_identify(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Gönderilen her fotoğrafı AYRI, bağımsız bir bitki/teneke olarak PlantNet'e sorar (ör. bahçedeki
+    10 farklı teneke) - fotoğrafları tek bir bitkinin farklı açıları gibi birleştirmez. Sonunda tüm
+    sonuçları özetleyen TEK bir genel AI değerlendirmesi ekler."""
     message = update.effective_message
     draft = context.user_data.get("draft", {})
     file_ids: list[str] = draft.get("photos", [])
+    note = draft.get("note", "")
     if not file_ids:
         await edit_or_send(update, "Hiç fotoğraf göndermedin.", plant_ai_menu())
         context.user_data.clear()
         return
     await message.chat.send_action(ChatAction.TYPING)
-    images: list[bytes] = []
-    for fid in file_ids:
+    user_id = update.effective_user.id if update.effective_user else ""
+
+    lines: list[str] = []
+    species_summary: list[str] = []
+    for i, fid in enumerate(file_ids, start=1):
         try:
             tg_file = await context.bot.get_file(fid)
-            images.append(bytes(await tg_file.download_as_bytearray()))
-        except Exception:
+            image_bytes = bytes(await tg_file.download_as_bytearray())
+        except Exception as exc:
+            lines.append(f"— Fotoğraf {i} —\nİndirilemedi: {exc}")
+            item_id = next_id("observations")
+            append_record("observations", OBSERVATION_HEADERS, {
+                "ID": item_id, "Tarih": today_str(), "Kategori": "PlantNet Tanı",
+                "Not": "PlantNet tanı - fotoğraf indirilemedi", "Foto_File_ID": fid, "AI_Yorum": "",
+                "CreatedAt": now().isoformat(timespec="seconds"),
+            })
             continue
-    if not images:
-        await edit_or_send(update, "Fotoğraflar indirilemedi.", plant_ai_menu())
-        context.user_data.clear()
-        return
-    user_id = update.effective_user.id if update.effective_user else ""
-    try:
-        answer, top_name = await identify_plant(images, draft.get("note", ""), context)
-    except Exception as exc:
-        answer, top_name = f"Bitki tanıma hatası: {exc}", ""
-    log_ai("ai_plant_logs", user_id, "bitki_tani", f"{len(images)} fotoğraf", answer)
-    for fid in file_ids:
+        try:
+            raw_text, top_name = await identify_plant(image_bytes, note, context, include_ai_tip=False)
+        except Exception as exc:
+            raw_text, top_name = f"Bitki tanıma hatası: {exc}", ""
+        lines.append(f"— Fotoğraf {i} —\n{raw_text}")
+        species_summary.append(f"Fotoğraf {i}: {top_name or 'tanınamadı'}")
         item_id = next_id("observations")
         append_record("observations", OBSERVATION_HEADERS, {
             "ID": item_id,
@@ -5112,11 +5132,26 @@ async def finalize_plant_identify(update: Update, context: ContextTypes.DEFAULT_
             "Kategori": "PlantNet Tanı",
             "Not": f"PlantNet tanı sonucu: {top_name}" if top_name else "PlantNet tanı",
             "Foto_File_ID": fid,
-            "AI_Yorum": answer,
+            "AI_Yorum": raw_text[:45000],
             "CreatedAt": now().isoformat(timespec="seconds"),
         })
+
+    combined_report = "\n\n".join(lines)
+    if species_summary and (GEMINI_API_KEY or GROQ_API_KEY):
+        await message.chat.send_action(ChatAction.TYPING)
+        summary_prompt = (
+            f"Bahçede {len(file_ids)} farklı teneke/kapta yetişen bitkiler PlantNet ile TEK TEK (birbirinden bağımsız) tanındı. Sonuçlar:\n"
+            + "\n".join(species_summary)
+            + f"\n\nKullanıcı notu: {note or '-'}.\n"
+            "Bunlara dayanarak Türkçe, kısa bir genel değerlendirme ve bakım tavsiyesi ver. Aynı türse tek bir toplu tavsiye yeter, "
+            "farklı türler varsa her biri için kısaca ayrı değin. Tanılar kesin değilse (düşük skorluysa) bunu belirt."
+        )
+        overall_tip = await ask_plant_ai(summary_prompt, context)
+        combined_report += f"\n\n— Genel Değerlendirme / AI Tavsiyesi —\n{overall_tip}"
+
+    log_ai("ai_plant_logs", user_id, "bitki_tani", f"{len(file_ids)} fotoğraf (ayrı ayrı tanındı)", combined_report)
     context.user_data.clear()
-    await send_chunks(update, answer + f"\n\n({len(file_ids)} fotoğraf Gözlem kayıtlarına da eklendi.)", plant_ai_menu())
+    await send_chunks(update, combined_report + f"\n\n({len(file_ids)} fotoğraf, her biri ayrı ayrı Gözlem kayıtlarına eklendi.)", plant_ai_menu())
 
 
 async def finalize_obs_batch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -5158,7 +5193,7 @@ async def finalize_obs_batch(update: Update, context: ContextTypes.DEFAULT_TYPE)
             "Kategori": draft.get("category", "Gözlem"),
             "Not": draft.get("note", ""),
             "Foto_File_ID": fid,
-            "AI_Yorum": ai_comment,
+            "AI_Yorum": ai_comment[:45000],
             "CreatedAt": now().isoformat(timespec="seconds"),
         })
     context.user_data.clear()
@@ -5184,10 +5219,13 @@ async def photo_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             else:
                 await finalize_obs_batch(update, context)
             return
-        await message.reply_text(
-            f"{len(photos)}/{PHOTO_BATCH_MAX} fotoğraf eklendi. Daha fotoğraf gönderebilir ya da bitirebilirsin.",
-            reply_markup=photo_batch_kb(len(photos)),
-        )
+        # Bilinçli olarak burada hiç mesaj göndermiyoruz - arka planda sessizce biriktiriyoruz.
+        # "✅ Bitti" butonu akışın başında (obs_note/plant:identify) zaten gönderildi ve her zaman
+        # tıklanabilir kalıyor. Sadece küçük bir reaksiyonla alındığını onaylıyoruz (varsa).
+        try:
+            await message.set_reaction("👍")
+        except Exception:
+            pass
         return
     await message.reply_text("Fotoğrafı kaydetmek veya yorumlatmak için önce Gözlem ya da Bitki AI menüsünden bir seçenek seç.", reply_markup=observation_menu())
 
