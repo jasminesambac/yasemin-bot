@@ -227,6 +227,25 @@ Tekrarlı hatırlatmalar (günlük/haftalık/aylık/aralıklı) artık sonsuza k
 - **Tavsiyelerim** menüsüne **📄 Word Olarak Al** ve **📊 Excel Olarak Al** butonları eklendi - tüm kaydedilmiş tavsiyelerini tek bir `.docx` ya da `.xlsx` dosyası olarak indirebilirsin.
 - **Önemli:** Bunun için `requirements.txt`'ye iki yeni bağımlılık eklendi: `python-docx` ve `openpyxl`. Render'da bir sonraki deploy'da otomatik kurulacaklar, senin bir şey yapmana gerek yok - ama bu konuşmadaki `requirements.txt` değişikliklerinden biri olduğu için bilgin olsun (matplotlib'ten sonraki ilk yeni bağımlılıklar).
 
+## 35. Bug düzeltmesi: PlantNet çoklu fotoğrafta "en fazla 5 görsel" hatası + yanlış tasarım
+
+- **Sorun 1 (senin düzeltmen):** İlk tasarımda gönderdiğin tüm fotoğrafları "aynı bitkinin farklı açıları" gibi TEK bir PlantNet isteğinde birleştiriyordum. Ama sen bahçende aynı türden farklı tenekelerin fotoğraflarını gönderiyorsun - her fotoğraf ayrı bir bitki/teneke, aynı bitkinin açıları değil.
+- **Sorun 2 (teknik hata):** Bu yanlış tasarım yüzünden 5'ten fazla fotoğraf gönderdiğinde PlantNet API zaten hata veriyordu: "images must contain at most 5 items" - PlantNet'in kendisi tek istekte en fazla 5 görsele izin veriyor.
+- **Düzeltme:** Artık gönderdiğin her fotoğraf PlantNet'e AYRI AYRI, bağımsız birer istekte soruluyor (10 fotoğraf = 10 ayrı tanıma). Her biri kendi Gözlem kaydına, kendi tanı sonucuyla kaydediliyor. En sonda hepsini özetleyen TEK bir genel AI değerlendirmesi/tavsiyesi ekleniyor (aynı türse tek tavsiye, farklı türlerse her biri için kısaca ayrı değiniyor).
+
+## 36. Bug düzeltmesi: Fotoğraf biriktirirken her seferinde mesaj gelmesin
+
+- **Sorun (senin bildirdiğin):** Çoklu fotoğraf gönderirken her fotoğraftan sonra bot yeni bir "N/10 fotoğraf eklendi" mesajı + "✅ Bitti / ❌ İptal" butonları gönderiyordu - 10 fotoğraf gönderince sohbet bu tekrar eden mesajlarla doluyordu.
+- **Düzeltme:** Artık fotoğraf gönderirken hiçbir ara mesaj gelmiyor, bot sessizce arka planda biriktiriyor (sadece fotoğrafa küçük bir 👍 reaksiyonu ekliyor, Telegram bunu destekliyorsa). "✅ Bitti" butonu akışın en başında bir kere gönderiliyor ve istediğin zaman (kaç fotoğraf gönderirsen gönder) tıklanabilir kalıyor - tekrar tekrar gönderilmiyor.
+
+## 37. Bug düzeltmesi: Gözlem kayıtları sohbette eksik/kesik görünüyordu
+
+- **Sorun (senin bildirdiğin):** "Gözlem kaydında tam kayıt yapmıyor, karakter yetmiyor sanırım."
+- **Kök sebep 1:** Gözlem listesi (📋 Gözlem Geçmişi / Tarihli Gözlemler) her kaydın AI yorumunu sohbette sadece **250 karakterde** kesiyordu. Kayıt Google Sheets'te tamdı, sadece bot ekranda kısaltılmış gösteriyordu - PlantNet artık daha uzun/detaylı sonuçlar ürettiği için bu artık gözle görülür şekilde eksik kalıyordu.
+- **Kök sebep 2:** "📋 Gözlem Geçmişi" sayfası (6 kayıt/sayfa) toplam metin Telegram'ın 4096 karakter mesaj sınırını aşarsa mesajı **sessizce hiç gönderemiyordu** (hata da göstermiyordu).
+- **Düzeltme:** Artık gözlem listelerinde AI yorumunun **tamamı** gösteriliyor, hiçbir yerde kesilmiyor. Sayfa başına kayıt sayısı 6'dan 4'e düşürüldü ve gerekirse sayfa içeriği otomatik olarak birden fazla mesaja bölünüyor (tek bir kayıt bile çok uzunsa artık sessizce kaybolmuyor, mutlaka gösteriliyor).
+- Ayrıca gözlem kayıtlarına yazılan AI yorumuna, Google Sheets'in gerçek hücre sınırını aşıp kayıt hatası vermesin diye 45.000 karakterlik bir güvenlik payı eklendi (normal şartlarda hiçbir zaman bu kadar uzun olmaz, sadece uç durumlara karşı önlem).
+
 ## Render'a Artık Gerekmeyen Değişken
 
 - `PERENUAL_API_KEY` ve `PERENUAL_IDENTIFY_API_KEY` artık hiçbir yerde kullanılmıyor (Bakım Bilgisi/Bitki Ara kaldırıldığı için). Render'da tanımlıysa durmasının bir zararı yok, silmek istersen silebilirsin, zorunlu değil.
