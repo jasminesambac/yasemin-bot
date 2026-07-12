@@ -197,4 +197,38 @@ Tekrarlı hatırlatmalar (günlük/haftalık/aylık/aralıklı) artık sonsuza k
 - **Düzeltme:** Artık Gemini 429 (kota doldu), 403 (yetki hatası) ya da 404 (model bulunamadı) döndürürse veya herhangi bir bağlantı hatası yaşanırsa, `GROQ_API_KEY` tanımlıysa bot **otomatik olarak Groq'a** soruyor. Sen hata mesajı görmüyorsun, sadece hangi AI cevap verdiyse onu görüyorsun. Bu, AI Sohbet, Verilerime Sor, Bitki AI, doğal dil kayıt gibi Gemini kullanan tüm ekranlarda geçerli.
 - Groq da tanımlı değilse (veya o da başarısız olursa) eski gibi anlaşılır bir hata mesajı gösteriliyor — sonsuz döngüye girmeyecek şekilde tasarlandı (Groq'tan tekrar Gemini'ye dönmüyor).
 
+## 30. Bitki AI baştan aşağı yenilendi: Bakım Bilgisi/Bitki Ara kaldırıldı, PlantNet odaklı hale geldi
+
+- **Bakım Bilgisi ve Bitki Ara kaldırıldı.** Bu ikisi Perenual adlı sınırlı bir veritabanına bağlıydı. Artık Bitki AI menüsü sadece 3 buton: **📸 PlantNet ile Tanı/Gözlem**, **🤖 AI Tavsiye**, **📋 Tavsiyelerim**.
+- **📸 PlantNet ile Tanı/Gözlem**, eski "Bitki Tanı" ve "Bitki Ara"nın yerini alan yeni, tek ve daha güçlü akış: fotoğraf(lar) gönderiyorsun, PlantNet tür tanıması yapıyor, AI kısa bakım tavsiyesi ekliyor, sonuç otomatik olarak **Gözlem kayıtlarına da ekleniyor** (senin istediğin gibi).
+- **🤖 AI Tavsiye** artık Perenual değil, doğrudan bitki bakımına adanmış, kendi kalıcı hafızasına sahip bir AI kullanıyor (aşağıda madde 32).
+
+## 31. Fotoğraflı gözlemde ve Bitki AI'da tek seferde 8-10 fotoğraf
+
+- Hem **Gözlem** menüsündeki "📷 Fotoğraflı Gözlem Ekle" / "🤖 Fotoğrafı AI Yorumla", hem de **Bitki AI**'daki "📸 PlantNet ile Tanı/Gözlem" artık tek seferde en fazla **10 fotoğraf** kabul ediyor.
+- Fotoğrafları art arda gönderebilirsin (Telegram'dan albüm olarak seçip de gönderebilirsin, tek tek de). Her fotoğraftan sonra "✅ Bitti (N foto)" butonu beliriyor - istediğin kadar fotoğraf gönderdikten sonra bu butona basınca **hepsi tek seferde, tek bir yorumda/tanımada** birleştiriliyor (mesaj uzunsa Telegram'ın izin verdiği ölçüde parçalara bölünüyor, ama tek bir bütün yorum olarak).
+- **Davranış değişikliği:** Önceden tek fotoğraf gönderince otomatik kaydediyordu. Artık her zaman (tek fotoğraf olsa bile) "✅ Bitti" butonuna basman gerekiyor - bu, çoklu fotoğraf desteğinin doğal bir sonucu.
+- 10 fotoğrafa ulaşırsan otomatik olarak işleme geçiyor, buton beklemiyor.
+
+## 32. Bitki AI artık hiç unutmuyor (kalıcı, ayrı hafıza)
+
+- Önceden "AI Tavsiye" sohbeti genel AI Sohbet ile aynı hafızayı paylaşıyordu (bu aslında genel sohbeti de kirletiyordu). Artık Bitki AI'nın **kendi ayrı ve kalıcı hafızası** var.
+- Bot yeniden başlasa da, menüden çıkıp girsen de, Bitki AI önceki bitki bakımı konuşmalarını Sheets'ten (`ai_plant_logs` sayfası) otomatik geri yüklüyor - **"AI Hafızayı Temizle" butonundan etkilenmiyor**, bilinçli olarak sürekli hatırlıyor çünkü bitki bakımından sorumlu.
+- Gemini kotası dolarsa (429) burada da otomatik Groq'a geçiyor (madde 29'daki gibi).
+
+## 33. AI Tavsiye'yi kaydet, reçeteye çevir, Tavsiyelerim listesi
+
+- "🤖 AI Tavsiye" cevabının altına iki yeni buton eklendi: **💾 Tavsiye Olarak Kaydet** ve **🧪 Reçete Olarak Kaydet**.
+- "Tavsiye Olarak Kaydet" yeni bir `plant_advice_saved` sayfasına kaydediyor; Bitki AI menüsündeki **📋 Tavsiyelerim** butonundan bu kayıtları listeleyebilir, silebilirsin.
+- "Reçete Olarak Kaydet" aynı tavsiyeyi doğrudan mevcut **Reçeteler** listesine ekliyor (Reçeteler menüsünden görebilir, uygulayabilirsin) - iki özellik birbiriyle koordineli çalışıyor.
+
+## 34. Tavsiyelerimi Word/Excel olarak indirme
+
+- **Tavsiyelerim** menüsüne **📄 Word Olarak Al** ve **📊 Excel Olarak Al** butonları eklendi - tüm kaydedilmiş tavsiyelerini tek bir `.docx` ya da `.xlsx` dosyası olarak indirebilirsin.
+- **Önemli:** Bunun için `requirements.txt`'ye iki yeni bağımlılık eklendi: `python-docx` ve `openpyxl`. Render'da bir sonraki deploy'da otomatik kurulacaklar, senin bir şey yapmana gerek yok - ama bu konuşmadaki `requirements.txt` değişikliklerinden biri olduğu için bilgin olsun (matplotlib'ten sonraki ilk yeni bağımlılıklar).
+
+## Render'a Artık Gerekmeyen Değişken
+
+- `PERENUAL_API_KEY` ve `PERENUAL_IDENTIFY_API_KEY` artık hiçbir yerde kullanılmıyor (Bakım Bilgisi/Bitki Ara kaldırıldığı için). Render'da tanımlıysa durmasının bir zararı yok, silmek istersen silebilirsin, zorunlu değil.
+
 Diğer tüm değişiklikler (hatırlatma sınırları, kritik stok bildirimi, AI kayıt sorgusu, performans iyileştirmeleri, hava durumu entegrasyonu, haftalık yedekleme) mevcut environment değişkenlerinle otomatik çalışır, ek bir şey eklemene gerek yok.
