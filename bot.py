@@ -64,8 +64,6 @@ TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "").strip()
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY", "").strip()
 PINECONE_HOST = os.getenv("PINECONE_HOST", "").strip()
 LLAMA_CLOUD_API_KEY = os.getenv("LLAMA_CLOUD_API_KEY", "").strip()
-PERENUAL_API_KEY = os.getenv("PERENUAL_API_KEY", "").strip()
-PERENUAL_IDENTIFY_API_KEY = os.getenv("PERENUAL_IDENTIFY_API_KEY", "").strip()
 PLANTNET_API_KEY = os.getenv("PLANTNET_API_KEY", "").strip()
 PLANTNET_PROJECT = os.getenv("PLANTNET_PROJECT", "all").strip() or "all"
 PORT = int(os.getenv("PORT", "10000"))
@@ -85,6 +83,7 @@ ESSENCE_HEADERS = ["ID", "Baslangic", "Cicek", "Yag", "Kap", "Gun", "Not", "Duru
 ALERT_HEADERS = ["Key", "Value", "UpdatedAt"]
 AI_DOC_HEADERS = ["ID", "Tarih", "Dosya", "Ozet", "Metin", "Pinecone", "CreatedAt"]
 AI_LOG_HEADERS = ["ID", "Tarih", "Saat", "Kullanici", "Tur", "Girdi", "Cevap", "Ek", "CreatedAt"]
+PLANT_ADVICE_HEADERS = ["ID", "Tarih", "Konu", "Soru", "Tavsiye", "Kaynak", "CreatedAt"]
 
 SHEET: dict[str, gspread.Worksheet] = {}
 AI_CLIENT = None
@@ -447,9 +446,25 @@ def ai_group_menu() -> InlineKeyboardMarkup:
 
 def plant_ai_menu() -> InlineKeyboardMarkup:
     return kb([
-        [("🔎 Bitki Ara", "plant:search"), ("📋 Bakım Bilgisi", "plant:care")],
-        [("📷 Bitki Tanı", "plant:identify"), ("🤖 AI Tavsiye", "plant:advice")],
+        [("📸 PlantNet ile Tanı/Gözlem", "plant:identify")],
+        [("🤖 AI Tavsiye", "plant:advice")],
+        [("📋 Tavsiyelerim", "advice:list")],
         [("🔙 Geri", "m:main")],
+    ])
+
+
+def advice_result_kb() -> InlineKeyboardMarkup:
+    return kb([
+        [("💾 Tavsiye Olarak Kaydet", "advice:save"), ("🧪 Reçete Olarak Kaydet", "advice:save_recipe")],
+        [("🔙 Geri", "m:plant_ai")],
+    ])
+
+
+def advice_list_menu() -> InlineKeyboardMarkup:
+    return kb([
+        [("❌ Tavsiye Sil", "advice:delete")],
+        [("📄 Word Olarak Al", "advice:export_word"), ("📊 Excel Olarak Al", "advice:export_excel")],
+        [("🔙 Geri", "m:plant_ai")],
     ])
 
 
@@ -650,7 +665,8 @@ def ai_logs_menu() -> InlineKeyboardMarkup:
         [("Agnes", "ailog:list:ai_agnes_logs"), ("Gemini", "ailog:list:ai_gemini_logs")],
         [("Groq", "ailog:list:ai_groq_logs"), ("Arama", "ailog:list:ai_web_logs")],
         [("Ses", "ailog:list:ai_voice_logs"), ("Dosya", "ailog:list:ai_file_logs")],
-        [("Görsel", "ailog:list:ai_image_logs"), ("Sil", "ailog:delete")],
+        [("Görsel", "ailog:list:ai_image_logs"), ("Bitki AI", "ailog:list:ai_plant_logs")],
+        [("Sil", "ailog:delete")],
         [("🔙 Geri", "m:ai")],
     ])
 
@@ -858,6 +874,8 @@ def init_sheets() -> None:
         "ai_voice_logs": AI_LOG_HEADERS,
         "ai_file_logs": AI_LOG_HEADERS,
         "ai_image_logs": AI_LOG_HEADERS,
+        "ai_plant_logs": AI_LOG_HEADERS,
+        "plant_advice_saved": PLANT_ADVICE_HEADERS,
     }
 
     try:
@@ -992,7 +1010,7 @@ def load_persistent_ai_history(sheet_name: str, user_id: int | str, limit: int =
 
 
 async def show_ai_logs(update: Update, sheet_name: str) -> None:
-    labels = {"ai_agnes_logs": "Agnes", "ai_gemini_logs": "Gemini", "ai_groq_logs": "Groq", "ai_web_logs": "Güncel Arama", "ai_voice_logs": "Ses", "ai_file_logs": "Dosya", "ai_image_logs": "Görsel"}
+    labels = {"ai_agnes_logs": "Agnes", "ai_gemini_logs": "Gemini", "ai_groq_logs": "Groq", "ai_web_logs": "Güncel Arama", "ai_voice_logs": "Ses", "ai_file_logs": "Dosya", "ai_image_logs": "Görsel", "ai_plant_logs": "Bitki AI"}
     rows = records(sheet_name)[-20:][::-1]
     if not rows:
         await edit_or_send(update, "Bu AI kaydında veri yok.", ai_logs_menu())
@@ -1014,22 +1032,77 @@ async def handle_ai_log_callback(update: Update, context: ContextTypes.DEFAULT_T
         await edit_or_send(update, "Silmek için şu formatta yaz:\n\nsayfa ID\n\nÖrnek: groq 12\n\nSayfalar: agnes, gemini, groq, arama, ses, dosya, gorsel", back_cancel("ai:logs"))
 
 
+def ensure_plant_history(context: ContextTypes.DEFAULT_TYPE, user_id: int | str) -> None:
+    """Bitki AI'nın kalıcı hafızasını (plant_history) gerekirse Sheets'ten geri yükler.
+    ai_memory_cleared'dan etkilenmez - bitki bakımı hafızası her zaman kalıcıdır."""
+    if not context.user_data.get("plant_history"):
+        context.user_data["plant_history"] = load_persistent_ai_history("ai_plant_logs", user_id)
+
+
 async def handle_plant_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, data: str) -> None:
-    if data == "plant:search":
-        context.user_data["flow"] = "plant_search"
-        await edit_or_send(update, "Aranacak bitki adını yaz. Örn: lavanta, monstera, rose", back_cancel("m:plant_ai"))
-        return
-    if data == "plant:care":
-        context.user_data["flow"] = "plant_care"
-        await edit_or_send(update, "Bakım bilgisi istediğin bitki adını yaz.", back_cancel("m:plant_ai"))
-        return
     if data == "plant:advice":
+        ensure_plant_history(context, update.effective_user.id)
         context.user_data["flow"] = "plant_advice"
-        await edit_or_send(update, "Bitkiyle ilgili sorunu yaz. Perenual verisi + AI ile cevaplayacağım.", back_cancel("m:plant_ai"))
+        await edit_or_send(update, "Bitkiyle ilgili sorunu yaz. Bitki bakımından sorumlu AI, önceki konuşmalarını da hatırlayarak cevaplayacak.", back_cancel("m:plant_ai"))
         return
     if data == "plant:identify":
+        ensure_plant_history(context, update.effective_user.id)
         context.user_data["flow"] = "plant_identify"
-        await edit_or_send(update, "Bitki fotoğrafını gönder. PlantNet ile tanımayı deneyeceğim (net, yakın çekim yaprak/çiçek fotoğrafı en iyi sonucu verir).", back_cancel("m:plant_ai"))
+        context.user_data["draft"] = {"photos": [], "note": ""}
+        await edit_or_send(
+            update,
+            f"Bitkinin fotoğraf(lar)ını gönder (aynı bitkinin farklı açıları/yaprak/çiçek dahil olmak üzere en fazla {PHOTO_BATCH_MAX} tane olabilir - ne kadar çok olursa PlantNet o kadar doğru tanır). Bitirince '✅ Bitti' butonuna bas.",
+            photo_batch_kb(0),
+        )
+        return
+    if data == "advice:list":
+        await show_advice_list(update)
+        return
+    if data == "advice:save":
+        adv = context.user_data.get("last_advice")
+        if not adv:
+            await edit_or_send(update, "Kaydedilecek bir tavsiye yok.", plant_ai_menu())
+            return
+        item_id = next_id("plant_advice_saved")
+        append_record("plant_advice_saved", PLANT_ADVICE_HEADERS, {
+            "ID": item_id,
+            "Tarih": today_str(),
+            "Konu": adv.get("konu", "-"),
+            "Soru": adv.get("soru", "-"),
+            "Tavsiye": adv.get("tavsiye", "-"),
+            "Kaynak": adv.get("kaynak", "-"),
+            "CreatedAt": now().isoformat(timespec="seconds"),
+        })
+        await edit_or_send(update, f"Tavsiye kaydedildi. ID {item_id}", plant_ai_menu())
+        return
+    if data == "advice:save_recipe":
+        adv = context.user_data.get("last_advice")
+        if not adv:
+            await edit_or_send(update, "Kaydedilecek bir tavsiye yok.", plant_ai_menu())
+            return
+        item_id = next_id("recipes")
+        append_record("recipes", RECIPE_HEADERS, {
+            "ID": item_id,
+            "Ad": adv.get("konu") or f"AI Bitki Tavsiyesi {today_str()}",
+            "Islem": "AI Bitki Tavsiyesi",
+            "Malzeme_Miktar": "",
+            "pH": "",
+            "Not": adv.get("tavsiye", "-"),
+            "Durum": "aktif",
+            "CreatedAt": now().isoformat(timespec="seconds"),
+        })
+        await edit_or_send(update, f"Reçete olarak kaydedildi. ID {item_id} (Reçeteler menüsünden görebilirsin).", plant_ai_menu())
+        return
+    if data == "advice:delete":
+        context.user_data["flow"] = "advice_delete"
+        await edit_or_send(update, "Silmek istediğin tavsiye ID numarasını yaz.", back_cancel("advice:list"))
+        return
+    if data == "advice:export_word":
+        await export_advice_word(update, context)
+        return
+    if data == "advice:export_excel":
+        await export_advice_excel(update, context)
+        return
 
 
 def find_inventory_by_row(row_number: int) -> dict[str, Any] | None:
@@ -1648,6 +1721,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if data.startswith("plant:"):
         await handle_plant_callback(update, context, data)
         return
+    if data.startswith("advice:"):
+        await handle_plant_callback(update, context, data)
+        return
     if data.startswith("issue:"):
         await handle_issue_callback(update, context, data)
         return
@@ -1704,6 +1780,20 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if data == "freetext:cancel":
         context.user_data.pop("pending_free_text", None)
         await edit_or_send(update, "Vazgeçildi.", main_menu())
+        return
+    if data == "photobatch:done":
+        flow = context.user_data.get("flow")
+        if flow == "plant_identify":
+            await finalize_plant_identify(update, context)
+        elif flow == "obs_photo":
+            await finalize_obs_batch(update, context)
+        else:
+            await edit_or_send(update, "Süresi geçmiş, tekrar başla.", main_menu())
+        return
+    if data == "photobatch:cancel":
+        flow = context.user_data.get("flow")
+        context.user_data.clear()
+        await edit_or_send(update, "İptal edildi.", plant_ai_menu() if flow == "plant_identify" else observation_menu())
         return
 
 
@@ -2528,6 +2618,75 @@ async def show_recipes(update: Update) -> None:
     if len(text) > MSG_LIMIT and update.effective_message:
         for part in chunks(text)[1:]:
             await update.effective_message.reply_text(part)
+
+
+def advice_row_text(row: dict[str, Any]) -> str:
+    return f"ID {row_id_text(row)} - {row.get('Tarih', '-')} - {row.get('Konu', '-')}\nSoru: {row.get('Soru', '-')}\nTavsiye: {row.get('Tavsiye', '-')}\nKaynak: {row.get('Kaynak', '-')}"
+
+
+async def show_advice_list(update: Update) -> None:
+    rows = records("plant_advice_saved")[-30:][::-1]
+    if not rows:
+        await edit_or_send(update, "Henüz kaydedilmiş tavsiye yok.", advice_list_menu())
+        return
+    text = "Tavsiyelerim\n\n"
+    for row in rows:
+        text += advice_row_text(row) + "\n\n"
+    await edit_or_send(update, text[:MSG_LIMIT], advice_list_menu())
+    if len(text) > MSG_LIMIT and update.effective_message:
+        for part in chunks(text)[1:]:
+            await update.effective_message.reply_text(part)
+
+
+async def export_advice_word(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    rows = records("plant_advice_saved")
+    if not rows:
+        await edit_or_send(update, "Kaydedilmiş tavsiye yok.", advice_list_menu())
+        return
+    try:
+        from docx import Document
+    except Exception:
+        await edit_or_send(update, "Word oluşturma kütüphanesi (python-docx) sunucuda yüklü değil.", advice_list_menu())
+        return
+    try:
+        doc = Document()
+        doc.add_heading("Bitki Bakım Tavsiyelerim", level=1)
+        for row in rows:
+            doc.add_heading(f"{row.get('Tarih', '-')} - {row.get('Konu', '-')}", level=2)
+            doc.add_paragraph(f"Soru: {row.get('Soru', '-')}")
+            doc.add_paragraph(f"Tavsiye: {row.get('Tavsiye', '-')}")
+            doc.add_paragraph(f"Kaynak: {row.get('Kaynak', '-')}")
+        buffer = io.BytesIO()
+        doc.save(buffer)
+        buffer.seek(0)
+        await update.effective_message.reply_document(InputFile(buffer, filename="tavsiyelerim.docx"), reply_markup=advice_list_menu())
+    except Exception as exc:
+        await edit_or_send(update, f"Word dosyası oluşturulamadı: {exc}", advice_list_menu())
+
+
+async def export_advice_excel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    rows = records("plant_advice_saved")
+    if not rows:
+        await edit_or_send(update, "Kaydedilmiş tavsiye yok.", advice_list_menu())
+        return
+    try:
+        from openpyxl import Workbook
+    except Exception:
+        await edit_or_send(update, "Excel oluşturma kütüphanesi (openpyxl) sunucuda yüklü değil.", advice_list_menu())
+        return
+    try:
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Tavsiyeler"
+        ws.append(["ID", "Tarih", "Konu", "Soru", "Tavsiye", "Kaynak"])
+        for row in rows:
+            ws.append([row.get("ID", ""), row.get("Tarih", ""), row.get("Konu", ""), row.get("Soru", ""), row.get("Tavsiye", ""), row.get("Kaynak", "")])
+        buffer = io.BytesIO()
+        wb.save(buffer)
+        buffer.seek(0)
+        await update.effective_message.reply_document(InputFile(buffer, filename="tavsiyelerim.xlsx"), reply_markup=advice_list_menu())
+    except Exception as exc:
+        await edit_or_send(update, f"Excel dosyası oluşturulamadı: {exc}", advice_list_menu())
 
 
 async def apply_recipe(update: Update, recipe_id: str) -> None:
@@ -3565,110 +3724,99 @@ async def execute_quick_log(update: Update, data: dict[str, Any]) -> None:
         await edit_or_send(update, f"Kayıt sırasında hata oluştu: {exc}", main_menu())
 
 
-async def perenual_get(path: str, params: dict[str, Any]) -> dict[str, Any]:
-    if not PERENUAL_API_KEY:
-        raise RuntimeError("Perenual API anahtarı eksik. Render Variables içine PERENUAL_API_KEY eklenmeli.")
-    url = f"https://perenual.com/api/{path.lstrip('/')}"
-    full_params = {"key": PERENUAL_API_KEY, **params}
-    response = await asyncio.to_thread(lambda: requests.get(url, params=full_params, timeout=45))
-    response.raise_for_status()
-    return response.json()
-
-
-def plant_summary(item: dict[str, Any]) -> str:
-    name = item.get("common_name") or item.get("scientific_name") or "-"
-    sci = item.get("scientific_name")
-    if isinstance(sci, list):
-        sci = ", ".join(str(x) for x in sci[:2])
-    return (
-        f"Bitki: {name}\n"
-        f"Bilimsel ad: {sci or '-'}\n"
-        f"Sulama: {item.get('watering', '-')}\n"
-        f"Güneş: {', '.join(item.get('sunlight', [])) if isinstance(item.get('sunlight'), list) else item.get('sunlight', '-')}\n"
-        f"Bakım seviyesi: {item.get('maintenance', '-')}\n"
-        f"Zehirli mi: {item.get('poisonous_to_humans', '-')}\n"
-    )
-
-
-async def ai_plant_fallback(query: str, purpose: str) -> str:
-    """Perenual'da bulunamayan (niş çeşitler, key eksikliği vb.) bitkiler için Gemini/Groq'un
-    genel bilgisine düşer. Perenual'ın yerini almaz, sadece sonuç yoksa devreye girer."""
-    if not (GEMINI_API_KEY or GROQ_API_KEY):
-        return "Bitki bulunamadı."
-    if purpose == "search":
-        prompt = (
-            f"'{query}' adlı bitki/çiçek türünü veya çeşidini tanıyor musun? Tanıyorsan Türkçe olarak kısaca "
-            "tanıt: bilimsel adı, ailesi ve öne çıkan 2-3 özelliği. Emin değilsen veya hiç tanımıyorsan bunu açıkça söyle, uydurma."
-        )
+async def ask_plant_ai(question: str, context: ContextTypes.DEFAULT_TYPE) -> str:
+    """Bitki bakımından sorumlu, kendi ayrı ve kalıcı hafızasına sahip AI. Genel AI Sohbet
+    hafızasını (gemini_history/groq_history) hiç kullanmaz, kendi 'plant_history'sini kullanır
+    - AI Hafızayı Temizle butonundan etkilenmez, sürekli hatırlar (bkz. load_persistent_ai_history
+    ile plant_history'nin flow başlangıcında doldurulması)."""
+    history = context.user_data.setdefault("plant_history", [])
+    system = "Bitki bakımından ve teşhisinden sorumlu, Türkçe cevap veren bir bahçıvan asistansın. Önceki konuşmaları hatırla, kısa ve uygulanabilir cevap ver."
+    if GEMINI_API_KEY:
+        parts = [{"text": system}]
+        for item in history[-10:]:
+            role = "Kullanıcı" if item.get("role") == "user" else "Asistan"
+            parts.append({"text": f"{role}: {item.get('content', '')}"})
+        parts.append({"text": f"Kullanıcı: {question}"})
+        payload = {"contents": [{"parts": parts}]}
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
+        try:
+            response = await asyncio.to_thread(
+                lambda: requests.post(url, params={"key": GEMINI_API_KEY}, json=payload, timeout=45)
+            )
+            if response.status_code in (429, 403, 404):
+                if GROQ_CLIENT:
+                    answer = await ask_plant_ai_groq(question, history, system)
+                else:
+                    return f"Gemini hatası ({response.status_code}), Groq da tanımlı değil."
+            else:
+                response.raise_for_status()
+                data = response.json()
+                response_parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+                answer = "\n".join(str(part.get("text", "")).strip() for part in response_parts if part.get("text")).strip()
+                answer = answer or "Gemini cevap döndürmedi."
+        except Exception:
+            if GROQ_CLIENT:
+                answer = await ask_plant_ai_groq(question, history, system)
+            else:
+                return "Gemini hatası oluştu, Groq da tanımlı değil."
+    elif GROQ_CLIENT:
+        answer = await ask_plant_ai_groq(question, history, system)
     else:
-        prompt = (
-            f"'{query}' adlı bitki/çiçek türü veya çeşidi için Türkçe, pratik bakım tavsiyesi ver "
-            "(sulama, ışık, toprak, sıcaklık, dikkat edilmesi gerekenler). Emin değilsen veya hiç tanımıyorsan bunu açıkça söyle, uydurma."
+        return "AI ayarı eksik (GEMINI_API_KEY veya GROQ_API_KEY gerekli)."
+    history.extend([{"role": "user", "content": question}, {"role": "assistant", "content": answer}])
+    context.user_data["plant_history"] = history[-16:]
+    return answer
+
+
+async def ask_plant_ai_groq(question: str, history: list[dict[str, str]], system: str) -> str:
+    if not GROQ_CLIENT:
+        return "Groq ayarı eksik."
+    messages = [{"role": "system", "content": system}]
+    messages.extend(history[-10:])
+    messages.append({"role": "user", "content": question})
+    try:
+        response = await asyncio.to_thread(
+            GROQ_CLIENT.chat.completions.create,
+            model=GROQ_MODEL,
+            messages=messages,
+            max_tokens=1200,
         )
-    ai = await ask_gemini_stateless(prompt) if GEMINI_API_KEY else await ask_groq_stateless(prompt)
-    return f"(Perenual veritabanında bulunamadı, AI bilgisiyle cevaplandı)\n\n{ai}"
+        return response.choices[0].message.content or "Groq cevap döndürmedi."
+    except Exception as exc:
+        return f"Groq hatası: {exc}"
 
 
-async def search_plant(query: str, context: ContextTypes.DEFAULT_TYPE) -> str:
-    try:
-        data = await perenual_get("species-list", {"q": query})
-        results = data.get("data", [])[:5]
-    except Exception:
-        results = []
-    if not results:
-        return await ai_plant_fallback(query, "search")
-    text = "Bulunan bitkiler (Perenual)\n\n"
-    for item in results:
-        text += f"ID {item.get('id')} - {item.get('common_name') or '-'}\n"
-        sci = item.get("scientific_name")
-        text += f"Bilimsel: {', '.join(sci) if isinstance(sci, list) else sci or '-'}\n\n"
-    return text
-
-
-async def plant_care(query: str, context: ContextTypes.DEFAULT_TYPE) -> str:
-    try:
-        data = await perenual_get("species-list", {"q": query})
-        results = data.get("data", [])
-    except Exception:
-        results = []
-    if not results:
-        return await ai_plant_fallback(query, "care")
-    plant_id = results[0].get("id")
-    detail = await perenual_get(f"species/details/{plant_id}", {})
-    raw = plant_summary(detail)
-    prompt = f"Bu Perenual bitki verisini Türkçe, pratik bakım tavsiyesine çevir. Bahçeciye kısa öneriler ver.\n\n{json.dumps(detail, ensure_ascii=False)[:8000]}"
-    ai = await ask_gemini_stateless(prompt) if GEMINI_API_KEY else await ask_groq_stateless(prompt)
-    return f"{raw}\nAI Bakım Tavsiyesi:\n{ai}"
-
-
-async def identify_plant(image_bytes: bytes, note: str, context: ContextTypes.DEFAULT_TYPE) -> str:
+async def identify_plant(images: list[bytes], note: str, context: ContextTypes.DEFAULT_TYPE) -> tuple[str, str]:
+    """PlantNet ile bir veya birden fazla fotoğraftan (aynı bitkinin farklı açıları/organları)
+    tür tanıma yapar - birden fazla fotoğraf göndermek PlantNet'in doğruluğunu artırır.
+    (yorum_metni, en_olası_tür_adı) tuple'ı döner."""
     if not PLANTNET_API_KEY:
-        return "PlantNet API anahtarı eksik. Render Variables içine PLANTNET_API_KEY eklenince çalışır."
+        return ("PlantNet API anahtarı eksik. Render Variables içine PLANTNET_API_KEY eklenince çalışır.", "")
     url = f"https://my-api.plantnet.org/v2/identify/{PLANTNET_PROJECT}"
     try:
         response = await asyncio.to_thread(
             lambda: requests.post(
                 url,
                 params={"api-key": PLANTNET_API_KEY},
-                files=[("images", ("photo.jpg", image_bytes, "image/jpeg"))],
-                data={"organs": "auto"},
+                files=[("images", (f"photo{i}.jpg", img, "image/jpeg")) for i, img in enumerate(images)],
+                data={"organs": ["auto"] * len(images)},
                 timeout=60,
             )
         )
         if response.status_code == 404:
-            return "PlantNet bu fotoğrafta bitki bulamadı. Daha net, yakından ve iyi ışıklı bir fotoğraf dene (yaprak veya çiçek yakın çekimi en iyi sonucu verir)."
+            return ("PlantNet bu fotoğraf(lar)da bitki bulamadı. Daha net, yakından ve iyi ışıklı bir fotoğraf dene (yaprak veya çiçek yakın çekimi en iyi sonucu verir).", "")
         if response.status_code in (400, 401, 403):
-            return f"PlantNet API hatası ({response.status_code}): API anahtarını kontrol et. Detay: {response.text[:300]}"
+            return (f"PlantNet API hatası ({response.status_code}): API anahtarını kontrol et. Detay: {response.text[:300]}", "")
         response.raise_for_status()
         data = response.json()
     except Exception as exc:
-        return f"PlantNet API hatası: {exc}"
+        return (f"PlantNet API hatası: {exc}", "")
 
     results = data.get("results", [])[:5]
     if not results:
-        return "Bitki tanınamadı. Farklı bir fotoğraf dene (yaprak/çiçek yakın çekimi daha iyi sonuç verir)."
+        return ("Bitki tanınamadı. Farklı bir fotoğraf dene (yaprak/çiçek yakın çekimi daha iyi sonuç verir).", "")
 
-    lines = ["Bitki Tanıma Sonuçları (PlantNet)\n"]
+    lines = [f"Bitki Tanıma Sonuçları (PlantNet, {len(images)} fotoğraf)\n"]
     for i, item in enumerate(results, start=1):
         species = item.get("species", {}) or {}
         score = (item.get("score") or 0) * 100
@@ -3690,9 +3838,9 @@ async def identify_plant(image_bytes: bytes, note: str, context: ContextTypes.DE
             "Bu bitki için Türkçe, kısa ve pratik bakım tavsiyesi ver (sulama, ışık, toprak, dikkat edilmesi gerekenler). "
             "Tanı kesin değilse (skor düşükse) bunu belirt, kesin teşhis gibi konuşma."
         )
-        ai_note = await ask_gemini_stateless(prompt) if GEMINI_API_KEY else await ask_groq_stateless(prompt)
-        return f"{raw_text}\n\nAI Bakım Tavsiyesi:\n{ai_note}"
-    return raw_text
+        ai_note = await ask_plant_ai(prompt, context)
+        return (f"{raw_text}\n\nAI Bakım Tavsiyesi:\n{ai_note}", top_common or top_name)
+    return (raw_text, top_common or top_name)
 
 
 async def identify_plant_disease(image_bytes: bytes) -> str:
@@ -3776,32 +3924,26 @@ async def ask_gemini(question: str, context: ContextTypes.DEFAULT_TYPE) -> str:
         return f"Gemini hatası: {exc}"
 
 
-async def analyze_image_with_gemini(image_bytes: bytes, note: str) -> str:
+async def analyze_images_with_gemini(images: list[bytes], note: str) -> str:
+    """Bir veya birden fazla fotoğrafı TEK bir istekte, birlikte yorumlar (hepsi aynı gözlemin
+    parçası olarak değerlendirilir - tek bir bitkinin farklı açıları/yaprakları gibi)."""
     if not GEMINI_API_KEY:
         return "Gemini API anahtarı eksik. Railway Variables içine GEMINI_API_KEY eklenince fotoğraf yorumlama çalışır."
+    count_note = f" ({len(images)} fotoğraf birlikte gönderildi, hepsini tek bir gözlemin parçası olarak değerlendir.)" if len(images) > 1 else ""
     prompt = (
-        "Bu fotoğrafı bahçecilik ve bitki bakımı açısından Türkçe yorumla. "
+        "Bu fotoğraf(lar)ı bahçecilik ve bitki bakımı açısından Türkçe yorumla." + count_note + " "
         "Kısa, pratik ve temkinli ol. Hastalık/zararlı belirtisi varsa olasılık olarak yaz, kesin teşhis gibi konuşma. "
         "Gözlem notu: "
         f"{note or '-'}"
     )
-    payload = {
-        "contents": [{
-            "parts": [
-                {"text": prompt},
-                {
-                    "inline_data": {
-                        "mime_type": "image/jpeg",
-                        "data": base64.b64encode(image_bytes).decode("ascii"),
-                    }
-                },
-            ]
-        }]
-    }
+    parts: list[dict[str, Any]] = [{"text": prompt}]
+    for img in images:
+        parts.append({"inline_data": {"mime_type": "image/jpeg", "data": base64.b64encode(img).decode("ascii")}})
+    payload = {"contents": [{"parts": parts}]}
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
     try:
         response = await asyncio.to_thread(
-            lambda: requests.post(url, params={"key": GEMINI_API_KEY}, json=payload, timeout=45)
+            lambda: requests.post(url, params={"key": GEMINI_API_KEY}, json=payload, timeout=60)
         )
         if response.status_code == 403:
             return "Gemini 403 hatası: API key yanlış olabilir, Gemini API açık olmayabilir veya seçilen modele erişimin olmayabilir. GEMINI_MODEL=gemini-2.5-flash yapıp yeni Google AI Studio key'i gir."
@@ -3809,8 +3951,8 @@ async def analyze_image_with_gemini(image_bytes: bytes, note: str) -> str:
             return "Gemini model hatası: model bulunamadı. GEMINI_MODEL=gemini-2.5-flash yapıp tekrar dene."
         response.raise_for_status()
         data = response.json()
-        parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
-        text = "\n".join(str(part.get("text", "")).strip() for part in parts if part.get("text")).strip()
+        response_parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+        text = "\n".join(str(part.get("text", "")).strip() for part in response_parts if part.get("text")).strip()
         return text or "Gemini fotoğrafı yorumladı ama metin döndürmedi."
     except Exception as exc:
         return f"Gemini fotoğraf yorumlama hatası: {exc}"
@@ -4053,7 +4195,7 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
 
     if flow == "ailog_delete":
-        mapping = {"agnes": "ai_agnes_logs", "gemini": "ai_gemini_logs", "groq": "ai_groq_logs", "arama": "ai_web_logs", "ses": "ai_voice_logs", "dosya": "ai_file_logs", "gorsel": "ai_image_logs", "görsel": "ai_image_logs"}
+        mapping = {"agnes": "ai_agnes_logs", "gemini": "ai_gemini_logs", "groq": "ai_groq_logs", "arama": "ai_web_logs", "ses": "ai_voice_logs", "dosya": "ai_file_logs", "gorsel": "ai_image_logs", "görsel": "ai_image_logs", "bitki": "ai_plant_logs", "bitki ai": "ai_plant_logs"}
         parts = text.split()
         if len(parts) != 2 or parts[0].casefold() not in mapping:
             await update.effective_message.reply_text("Format: sayfa ID\nÖrnek: groq 12", reply_markup=back_cancel("ai:logs"))
@@ -4062,31 +4204,18 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         context.user_data.clear()
         return
 
-    if flow == "plant_search":
-        await update.effective_message.chat.send_action(ChatAction.TYPING)
-        try:
-            answer = await search_plant(text, context)
-        except Exception as exc:
-            answer = f"Bitki arama hatası: {exc}"
-        await send_chunks(update, answer, plant_ai_menu())
-        return
-
-    if flow == "plant_care":
-        await update.effective_message.chat.send_action(ChatAction.TYPING)
-        try:
-            answer = await plant_care(text, context)
-        except Exception as exc:
-            answer = f"Bitki bakım hatası: {exc}"
-        log_ai("ai_gemini_logs" if GEMINI_API_KEY else "ai_groq_logs", update.effective_user.id, "bitki_bakim", text, answer)
-        await send_chunks(update, answer, plant_ai_menu())
-        return
-
     if flow == "plant_advice":
+        ensure_plant_history(context, update.effective_user.id)
         await update.effective_message.chat.send_action(ChatAction.TYPING)
-        prompt = f"Bitki bakım sorusuna Türkçe, pratik ve temkinli cevap ver. Soru: {text}"
-        answer = await ask_gemini(prompt, context) if GEMINI_API_KEY else await ask_groq(prompt, context)
-        log_ai("ai_gemini_logs" if GEMINI_API_KEY else "ai_groq_logs", update.effective_user.id, "bitki_ai", text, answer)
-        await send_chunks(update, answer, plant_ai_menu())
+        answer = await ask_plant_ai(text, context)
+        log_ai("ai_plant_logs", update.effective_user.id, "bitki_ai", text, answer)
+        context.user_data["last_advice"] = {
+            "konu": text[:60],
+            "soru": text,
+            "tavsiye": answer,
+            "kaynak": "Gemini" if GEMINI_API_KEY else ("Groq" if GROQ_API_KEY else "-"),
+        }
+        await send_chunks(update, answer, advice_result_kb())
         return
 
     if flow == "quick_search":
@@ -4632,6 +4761,11 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         context.user_data.clear()
         return
 
+    if flow == "advice_delete":
+        await delete_by_id(update, "plant_advice_saved", text, "Tavsiye silindi.", advice_list_menu())
+        context.user_data.clear()
+        return
+
     if flow == "issue_add_area":
         context.user_data["draft"] = {"area": "" if text == "-" else text}
         context.user_data["flow"] = "issue_add_title"
@@ -4899,9 +5033,11 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
 
     if flow == "obs_note":
-        context.user_data.setdefault("draft", {})["note"] = "" if text == "-" else text
+        draft = context.user_data.setdefault("draft", {})
+        draft["note"] = "" if text == "-" else text
+        draft["photos"] = []
         context.user_data["flow"] = "obs_photo"
-        await update.effective_message.reply_text("Şimdi fotoğrafı gönder.", reply_markup=back_cancel("m:observation"))
+        await update.effective_message.reply_text(f"Şimdi fotoğraf(lar)ı gönder (en fazla {PHOTO_BATCH_MAX} tane, hepsi tek seferde{' yorumlanacak' if draft.get('ai') else ' kaydedilecek'}).", reply_markup=back_cancel("m:observation"))
         return
     if flow == "obs_date":
         date = parse_date(text)
@@ -4932,66 +5068,128 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
 
 
+PHOTO_BATCH_MAX = 10
+
+
+def photo_batch_kb(count: int) -> InlineKeyboardMarkup:
+    return kb([
+        [(f"✅ Bitti ({count} foto)", "photobatch:done")],
+        [("❌ İptal", "photobatch:cancel")],
+    ])
+
+
+async def finalize_plant_identify(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    message = update.effective_message
+    draft = context.user_data.get("draft", {})
+    file_ids: list[str] = draft.get("photos", [])
+    if not file_ids:
+        await edit_or_send(update, "Hiç fotoğraf göndermedin.", plant_ai_menu())
+        context.user_data.clear()
+        return
+    await message.chat.send_action(ChatAction.TYPING)
+    images: list[bytes] = []
+    for fid in file_ids:
+        try:
+            tg_file = await context.bot.get_file(fid)
+            images.append(bytes(await tg_file.download_as_bytearray()))
+        except Exception:
+            continue
+    if not images:
+        await edit_or_send(update, "Fotoğraflar indirilemedi.", plant_ai_menu())
+        context.user_data.clear()
+        return
+    user_id = update.effective_user.id if update.effective_user else ""
+    try:
+        answer, top_name = await identify_plant(images, draft.get("note", ""), context)
+    except Exception as exc:
+        answer, top_name = f"Bitki tanıma hatası: {exc}", ""
+    log_ai("ai_plant_logs", user_id, "bitki_tani", f"{len(images)} fotoğraf", answer)
+    for fid in file_ids:
+        item_id = next_id("observations")
+        append_record("observations", OBSERVATION_HEADERS, {
+            "ID": item_id,
+            "Tarih": today_str(),
+            "Kategori": "PlantNet Tanı",
+            "Not": f"PlantNet tanı sonucu: {top_name}" if top_name else "PlantNet tanı",
+            "Foto_File_ID": fid,
+            "AI_Yorum": answer,
+            "CreatedAt": now().isoformat(timespec="seconds"),
+        })
+    context.user_data.clear()
+    await send_chunks(update, answer + f"\n\n({len(file_ids)} fotoğraf Gözlem kayıtlarına da eklendi.)", plant_ai_menu())
+
+
+async def finalize_obs_batch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    message = update.effective_message
+    draft = context.user_data.get("draft", {})
+    file_ids: list[str] = draft.get("photos", [])
+    if not file_ids:
+        await edit_or_send(update, "Hiç fotoğraf göndermedin.", observation_menu())
+        context.user_data.clear()
+        return
+    ai_comment = ""
+    if draft.get("ai"):
+        await message.chat.send_action(ChatAction.TYPING)
+        images: list[bytes] = []
+        for fid in file_ids:
+            try:
+                tg_file = await context.bot.get_file(fid)
+                images.append(bytes(await tg_file.download_as_bytearray()))
+            except Exception:
+                continue
+        if images:
+            try:
+                ai_comment = await analyze_images_with_gemini(images, draft.get("note", ""))
+                try:
+                    disease_note = await identify_plant_disease(images[0])
+                except Exception:
+                    disease_note = ""
+                if disease_note:
+                    ai_comment = f"{ai_comment}\n\n{disease_note}"
+                log_ai("ai_image_logs", update.effective_user.id if update.effective_user else "", "görsel", draft.get("note", ""), ai_comment, file_ids[0])
+            except Exception as exc:
+                ai_comment = f"Fotoğraflar yorumlanamadı: {exc}"
+
+    for fid in file_ids:
+        item_id = next_id("observations")
+        append_record("observations", OBSERVATION_HEADERS, {
+            "ID": item_id,
+            "Tarih": today_str(),
+            "Kategori": draft.get("category", "Gözlem"),
+            "Not": draft.get("note", ""),
+            "Foto_File_ID": fid,
+            "AI_Yorum": ai_comment,
+            "CreatedAt": now().isoformat(timespec="seconds"),
+        })
+    context.user_data.clear()
+    text = f"{len(file_ids)} fotoğraflı gözlem kaydedildi."
+    if ai_comment:
+        text += f"\n\nAI Yorumu:\n{ai_comment}"
+    await send_chunks(update, text, observation_menu())
+
+
 async def photo_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     flow = context.user_data.get("flow")
     message = update.effective_message
     if not message or not message.photo:
         return
-    if flow == "plant_identify":
-        await message.chat.send_action(ChatAction.TYPING)
-        try:
-            photo = message.photo[-1]
-            tg_file = await context.bot.get_file(photo.file_id)
-            image_bytes = bytes(await tg_file.download_as_bytearray())
-            answer = await identify_plant(image_bytes, "", context)
-            log_ai("ai_image_logs", update.effective_user.id if update.effective_user else "", "bitki_tani", "Bitki fotoğrafı", answer, photo.file_id)
-            await send_chunks(update, answer, plant_ai_menu())
-        except Exception as exc:
-            await message.reply_text(f"Bitki tanıma hatası: {exc}", reply_markup=plant_ai_menu())
+    if flow in ("plant_identify", "obs_photo"):
+        draft = context.user_data.setdefault("draft", {})
+        photos = draft.setdefault("photos", [])
+        photo = message.photo[-1]
+        photos.append(photo.file_id)
+        if len(photos) >= PHOTO_BATCH_MAX:
+            if flow == "plant_identify":
+                await finalize_plant_identify(update, context)
+            else:
+                await finalize_obs_batch(update, context)
+            return
+        await message.reply_text(
+            f"{len(photos)}/{PHOTO_BATCH_MAX} fotoğraf eklendi. Daha fotoğraf gönderebilir ya da bitirebilirsin.",
+            reply_markup=photo_batch_kb(len(photos)),
+        )
         return
-    if flow != "obs_photo":
-        await message.reply_text("Fotoğrafı kaydetmek veya yorumlatmak için önce Gözlem menüsünden bir seçenek seç.", reply_markup=observation_menu())
-        return
-
-    d = context.user_data.get("draft", {})
-    photo = message.photo[-1]
-    file_id = photo.file_id
-    ai_comment = ""
-
-    if d.get("ai"):
-        await message.chat.send_action(ChatAction.TYPING)
-        try:
-            tg_file = await context.bot.get_file(file_id)
-            image_bytes = bytes(await tg_file.download_as_bytearray())
-            ai_comment = await analyze_image_with_gemini(image_bytes, d.get("note", ""))
-            try:
-                disease_note = await identify_plant_disease(image_bytes)
-            except Exception:
-                disease_note = ""
-            if disease_note:
-                ai_comment = f"{ai_comment}\n\n{disease_note}"
-            log_ai("ai_image_logs", update.effective_user.id if update.effective_user else "", "görsel", d.get("note", ""), ai_comment, file_id)
-        except Exception as exc:
-            ai_comment = f"Fotoğraf indirilemedi veya yorumlanamadı: {exc}"
-
-    item_id = next_id("observations")
-    append_record("observations", OBSERVATION_HEADERS, {
-        "ID": item_id,
-        "Tarih": today_str(),
-        "Kategori": d.get("category", "Gözlem"),
-        "Not": d.get("note", ""),
-        "Foto_File_ID": file_id,
-        "AI_Yorum": ai_comment,
-        "CreatedAt": now().isoformat(timespec="seconds"),
-    })
-    context.user_data.clear()
-
-    text = f"Gözlem kaydedildi. ID {item_id}"
-    if ai_comment:
-        text += f"\n\nAI Yorumu:\n{ai_comment}"
-    parts = chunks(text)
-    for i, part in enumerate(parts):
-        await message.reply_text(part, reply_markup=observation_menu() if i == len(parts) - 1 else None)
+    await message.reply_text("Fotoğrafı kaydetmek veya yorumlatmak için önce Gözlem ya da Bitki AI menüsünden bir seçenek seç.", reply_markup=observation_menu())
 
 
 async def voice_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
