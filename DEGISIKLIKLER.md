@@ -246,6 +246,12 @@ Tekrarlı hatırlatmalar (günlük/haftalık/aylık/aralıklı) artık sonsuza k
 - **Düzeltme:** Artık gözlem listelerinde AI yorumunun **tamamı** gösteriliyor, hiçbir yerde kesilmiyor. Sayfa başına kayıt sayısı 6'dan 4'e düşürüldü ve gerekirse sayfa içeriği otomatik olarak birden fazla mesaja bölünüyor (tek bir kayıt bile çok uzunsa artık sessizce kaybolmuyor, mutlaka gösteriliyor).
 - Ayrıca gözlem kayıtlarına yazılan AI yorumuna, Google Sheets'in gerçek hücre sınırını aşıp kayıt hatası vermesin diye 45.000 karakterlik bir güvenlik payı eklendi (normal şartlarda hiçbir zaman bu kadar uzun olmaz, sadece uç durumlara karşı önlem).
 
+## 38. Google Sheets geçici hatalarında (503) otomatik tekrar deneme
+
+- **Sorun (senin bildirdiğin):** "⚠️ Bot hatası (reminder_worker) - APIError: [503] The service is currently unavailable." bildirimi geldi.
+- **Açıklama:** Bu hata bot kodundan değil, Google Sheets sunucusundan geçici bir yoğunluk/bakım anında geliyor - nadiren olur, birkaç saniye içinde kendiliğinden düzelir. Önceki tasarımda bot bunu hemen "hata" sayıp sana bildirim gönderiyor ve o turu atlıyordu.
+- **Düzeltme:** Artık Sheets'ten veri okurken 500/502/503/504 gibi geçici hatalarla karşılaşılırsa bot kısa bir bekleme ile (1.5, 3 saniye) otomatik olarak birkaç kez tekrar deniyor - genelde ikinci denemede sorun kendiliğinden düzeliyor ve sana hiç bildirim gitmiyor. Sorun gerçekten kalıcıysa (3 denemeden sonra hâlâ başarısızsa) eskisi gibi "Bot hatası" bildirimi gelmeye devam ediyor - bu güvenlik ağı kaldırılmadı.
+
 ## Render'a Artık Gerekmeyen Değişken
 
 - `PERENUAL_API_KEY` ve `PERENUAL_IDENTIFY_API_KEY` artık hiçbir yerde kullanılmıyor (Bakım Bilgisi/Bitki Ara kaldırıldığı için). Render'da tanımlıysa durmasının bir zararı yok, silmek istersen silebilirsin, zorunlu değil.
