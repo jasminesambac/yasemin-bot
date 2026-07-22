@@ -23,6 +23,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputFile, Keyb
 from telegram.constants import ChatAction
 from telegram.error import BadRequest
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
+from telegram.request import HTTPXRequest
 
 try:
     from openai import OpenAI
@@ -5578,7 +5579,18 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 def build_app() -> Application:
     init_sheets()
     init_ai()
-    app = Application.builder().token(TELEGRAM_BOT_TOKEN).post_init(post_init).build()
+    # Varsayılan PTB ayarları (küçük bağlantı havuzu, kısa timeout) tek kullanıcılı basit botlar için
+    # yeterliydi, ama artık arka planda 3 worker (hatırlatma/stok/yedek) + foto/AI işleme aynı anda
+    # Telegram API'sine istek atabiliyor. Havuzu büyütüp timeout'ları uzatmak, ara sıra görülen
+    # "httpx.ReadError / NetworkError" bildirimlerinin sıklığını azaltır.
+    request = HTTPXRequest(
+        connection_pool_size=8,
+        connect_timeout=15.0,
+        read_timeout=30.0,
+        write_timeout=30.0,
+        pool_timeout=10.0,
+    )
+    app = Application.builder().token(TELEGRAM_BOT_TOKEN).request(request).post_init(post_init).build()
     app.add_handler(CommandHandler(["start", "menu"], start))
     app.add_handler(CommandHandler("iptal", cancel))
     app.add_handler(CommandHandler("ara", search_command))
