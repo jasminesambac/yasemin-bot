@@ -252,6 +252,12 @@ Tekrarlı hatırlatmalar (günlük/haftalık/aylık/aralıklı) artık sonsuza k
 - **Açıklama:** Bu hata bot kodundan değil, Google Sheets sunucusundan geçici bir yoğunluk/bakım anında geliyor - nadiren olur, birkaç saniye içinde kendiliğinden düzelir. Önceki tasarımda bot bunu hemen "hata" sayıp sana bildirim gönderiyor ve o turu atlıyordu.
 - **Düzeltme:** Artık Sheets'ten veri okurken 500/502/503/504 gibi geçici hatalarla karşılaşılırsa bot kısa bir bekleme ile (1.5, 3 saniye) otomatik olarak birkaç kez tekrar deniyor - genelde ikinci denemede sorun kendiliğinden düzeliyor ve sana hiç bildirim gitmiyor. Sorun gerçekten kalıcıysa (3 denemeden sonra hâlâ başarısızsa) eskisi gibi "Bot hatası" bildirimi gelmeye devam ediyor - bu güvenlik ağı kaldırılmadı.
 
+## 39. Telegram bağlantı hatalarını (httpx.ReadError / NetworkError) azaltma
+
+- **Sorun (senin bildirdiğin):** "⚠️ Bot hatası (handler) - NetworkError: httpx.ReadError" bildirimi geldi. Bu, Sheets 503'ünden farklı - bu sefer bot ile Telegram sunucuları arasındaki bağlantıyla ilgili.
+- **Açıklama:** Bot varsayılan ayarlarla (çok küçük bir bağlantı havuzu, kısa timeout) kurulmuştu - bu, tek bir kullanıcıyla basit bir bot için yeterliydi. Ama artık arka planda 3 ayrı işçi (hatırlatma kontrolü, stok kontrolü, haftalık yedekleme) + fotoğraf/AI işleme aynı anda Telegram'a istek atabiliyor; küçük havuzda bu eşzamanlı isteklerin birbirini beklemesi/zaman aşımına uğraması ihtimali artıyor.
+- **Düzeltme:** Bağlantı havuzu büyütüldü ve bağlanma/okuma/yazma sürelerine daha cömert timeout'lar tanındı. Bu, bu tür ara sıra görülen ağ hatalarının sıklığını azaltmalı - Sheets 503'ünde olduğu gibi bunu da %100 ortadan kaldıramayız (bazen gerçekten Telegram ya da Render tarafında geçici bir aksama olabilir), ama artık bu durumlara karşı bot daha dayanıklı.
+
 ## Render'a Artık Gerekmeyen Değişken
 
 - `PERENUAL_API_KEY` ve `PERENUAL_IDENTIFY_API_KEY` artık hiçbir yerde kullanılmıyor (Bakım Bilgisi/Bitki Ara kaldırıldığı için). Render'da tanımlıysa durmasının bir zararı yok, silmek istersen silebilirsin, zorunlu değil.
