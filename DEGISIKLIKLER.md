@@ -258,6 +258,14 @@ Tekrarlı hatırlatmalar (günlük/haftalık/aylık/aralıklı) artık sonsuza k
 - **Açıklama:** Bot varsayılan ayarlarla (çok küçük bir bağlantı havuzu, kısa timeout) kurulmuştu - bu, tek bir kullanıcıyla basit bir bot için yeterliydi. Ama artık arka planda 3 ayrı işçi (hatırlatma kontrolü, stok kontrolü, haftalık yedekleme) + fotoğraf/AI işleme aynı anda Telegram'a istek atabiliyor; küçük havuzda bu eşzamanlı isteklerin birbirini beklemesi/zaman aşımına uğraması ihtimali artıyor.
 - **Düzeltme:** Bağlantı havuzu büyütüldü ve bağlanma/okuma/yazma sürelerine daha cömert timeout'lar tanındı. Bu, bu tür ara sıra görülen ağ hatalarının sıklığını azaltmalı - Sheets 503'ünde olduğu gibi bunu da %100 ortadan kaldıramayız (bazen gerçekten Telegram ya da Render tarafında geçici bir aksama olabilir), ama artık bu durumlara karşı bot daha dayanıklı.
 
+## 40. Bug düzeltmesi: Kritik stok bildirimi her dakika tekrarlıyordu
+
+- **Sorun (senin bildirdiğin):** "Kritik stok bildirimi her dakika geliyor."
+- **İnceleme:** Mevcut tekrar-önleme mantığını (`stock_sent_v2` - Google Sheets'e kaydedilen "bunu zaten gönderdim" listesi) satır satır tekrar kontrol ettim, kod mantığı doğru görünüyor. Kesin kanıtlayamasam da en olası açıklama: Sheets'e yazma/okuma arasında bir gecikme/uyuşmazlık olması ya da Render'da eski bir deploy'un arka plan işçisinin tam kapanmadan yenisiyle birlikte çalışmaya devam etmesi (bunu Render tarafında ben göremiyorum - Render dashboard'unda "yasemin-bot" için birden fazla aktif servis/instance olup olmadığını bir kontrol edebilirsen iyi olur).
+- **Düzeltme (kesin garanti):** Sheets tabanlı tekrar-önlemeye ek olarak, botun kendi süreç-içi (in-memory) bir hafızası eklendi. Artık bot çalıştığı sürece, aynı kritik ürün için Sheets tarafında ne olursa olsun **asla ikinci kez bildirim göndermiyor** - "sadece bir defa gelsin ve dursun" isteğin artık kod seviyesinde garanti altında.
+- Ayrıca bir kritik stok bildirimi gönderildiğinde sunucu loguna hangi ürün için, hangi önceki gönderilenler listesiyle gönderildiği yazılıyor - eğer yine de tekrar görürsen bu loglar kesin kök sebebi bulmamıza yardımcı olacak.
+- Aynı çift-koruma, son kullanma tarihi bildirimlerine de eklendi (madde 18).
+
 ## Render'a Artık Gerekmeyen Değişken
 
 - `PERENUAL_API_KEY` ve `PERENUAL_IDENTIFY_API_KEY` artık hiçbir yerde kullanılmıyor (Bakım Bilgisi/Bitki Ara kaldırıldığı için). Render'da tanımlıysa durmasının bir zararı yok, silmek istersen silebilirsin, zorunlu değil.

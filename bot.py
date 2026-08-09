@@ -3315,6 +3315,10 @@ async def reminder_worker(app: Application) -> None:
         await asyncio.sleep(30)
 
 
+_stock_alert_sent_memory: set[str] = set()
+_expiry_alert_sent_memory: set[str] = set()
+
+
 async def stock_alert_worker(app: Application) -> None:
     while True:
         try:
@@ -3322,6 +3326,13 @@ async def stock_alert_worker(app: Application) -> None:
             if chat_id:
                 sent = {x for x in alert_value("stock_sent_v2").split(",") if x}
                 expiry_sent = {x for x in alert_value("expiry_sent_v1").split(",") if x}
+                # Sheets tabanlı dedup (yukarıdaki iki satır) tek başına yetersiz kalabildiği için
+                # (ör. Sheets'e yazma/okuma arasında bir gecikme/uyuşmazlık olursa, ya da aynı anda
+                # birden fazla bot süreci çalışıyorsa) süreç-içi (in-memory) bir hafıza da tutuyoruz.
+                # Bu süreç ne kadar çalışırsa çalışsın, aynı ürün için ASLA ikinci kez bildirim
+                # göndermiyor - Sheets tarafında bir sorun olsa bile "sadece bir kere gelsin" garantisi.
+                sent |= _stock_alert_sent_memory
+                expiry_sent |= _expiry_alert_sent_memory
                 current_critical: set[str] = set()
                 for item in records("inventory"):
                     item_id = row_id_text(item)
@@ -3336,6 +3347,7 @@ async def stock_alert_worker(app: Application) -> None:
                             days_left = None
                         if days_left is not None and days_left <= 14:
                             expiry_sent.add(item_id)
+                            _expiry_alert_sent_memory.add(item_id)
                             set_alert_value("expiry_sent_v1", ",".join(sorted(expiry_sent)))
                             durum = "süresi geçmiş" if days_left < 0 else f"{days_left} gün kaldı"
                             await app.bot.send_message(
@@ -3355,12 +3367,15 @@ async def stock_alert_worker(app: Application) -> None:
                         current_critical.add(item_id)
                     if remaining <= threshold and item_id not in sent:
                         sent.add(item_id)
+                        _stock_alert_sent_memory.add(item_id)
                         set_alert_value("stock_sent_v2", ",".join(sorted(sent)))
+                        log.info("Kritik stok bildirimi gönderiliyor: ID %s (%s), önceki gönderilenler: %s", item_id, item.get("Malzeme / Alet", "-"), sorted(sent - {item_id}))
                         await app.bot.send_message(
                             chat_id=int(chat_id),
                             text=f"Kritik stok uyarısı\n\nID {item_id} - {item.get('Malzeme / Alet','-')}: {format_decimal(remaining)} {item.get('Birim','')}",
                         )
                 new_sent = sent.intersection(current_critical)
+                _stock_alert_sent_memory.intersection_update(current_critical)
                 if new_sent != sent:
                     set_alert_value("stock_sent_v2", ",".join(sorted(new_sent)))
         except Exception as exc:
