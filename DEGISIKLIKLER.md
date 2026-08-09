@@ -266,6 +266,19 @@ Tekrarlı hatırlatmalar (günlük/haftalık/aylık/aralıklı) artık sonsuza k
 - Ayrıca bir kritik stok bildirimi gönderildiğinde sunucu loguna hangi ürün için, hangi önceki gönderilenler listesiyle gönderildiği yazılıyor - eğer yine de tekrar görürsen bu loglar kesin kök sebebi bulmamıza yardımcı olacak.
 - Aynı çift-koruma, son kullanma tarihi bildirimlerine de eklendi (madde 18).
 
+## 41. Genel hata kontrolü (kapsamlı kod denetimi)
+
+- **İstek (senin):** "genel hata kontrolü yap" - kod bu kadar büyüdükten ve bu kadar çok değişiklik yapıldıktan sonra genel bir tarama istedin.
+- **Kontrol edilenler:**
+  - Tanımsız fonksiyon çağrısı (silinen bir fonksiyona kalan referans) - **temiz**, hiçbir şey bulunamadı.
+  - Menüdeki her buton (168 adet) bir karşılığı (handler) var mı - **temiz**, işlenmeyen buton yok.
+  - Kullanıcıdan metin beklenen her "flow" adımının bir karşılığı var mı - 7 adet eksik bulundu ve düzeltildi (aşağıda).
+  - Uzun metinlerin Telegram'ın ~4096 karakter sınırını aşınca sessizce kaybolması - 1 kök sebep bulundu ve düzeltildi (aşağıda, madde 37'nin genelleştirilmiş hâli).
+  - Sheets'te kullanılan tüm sayfa adlarının `init_sheets()`'te kayıtlı olup olmadığı - **temiz**.
+- **Bug 1 - Buton yerine yazı yazılırsa bot sessiz kalıyordu:** "Stok Ekle", "Stoktan Düş", ve tarih seçimi bekleyen ("İşlem Ekle", "Kompost Ekle", "Plan Ekle", "Günlük Ekle", "Hatırlatma Ekle") akışlarının başında, bot butonlu bir seçim bekliyordu (ör. "Bugün / Yarın / Özel Tarih"). Eğer bu anda buton yerine elle bir şey yazsaydın, bot hiçbir cevap vermiyordu (sessizce hiçbir şey olmuyordu) - bu kafa karıştırıcı bir "donma" gibi görünebilirdi. **Düzeltme:** Artık bu durumda "Bu adımda yazı yerine yukarıdaki butonlardan birini seçmen gerekiyor." mesajı ile ana menüye dönme seçeneği geliyor.
+- **Bug 2 - Sayfalı listelerde (Geçmiş/Kompost) uzun kayıtlar sayfayı sessizce bozabiliyordu:** Madde 37'de Gözlem listesinde bulduğumuz "metin 4096 karakteri aşınca mesaj sessizce gönderilemiyor" sorununun kökü aslında `edit_or_send()` fonksiyonundaydı (butona basınca ekranı güncelleyen ortak fonksiyon) - sadece Gözlem'e özel bir yama yapılmıştı, ama "Tüm Geçmiş" ve "Tüm Kompost Geçmişi" sayfalarında (özellikle uzun notlar girildiğinde) aynı risk hâlâ vardı. **Düzeltme:** `edit_or_send()` artık her yerde otomatik olarak uzun metni parçalara bölüp gönderiyor - bu tek düzeltme Geçmiş, Kompost ve ileride eklenecek benzer tüm sayfaları kapsıyor, ayrı ayrı yama gerekmiyor.
+- **Sonuç:** Bulunan 2 gerçek bug düzeltildi, kalan kontroller temiz çıktı. `python3 -m py_compile bot.py` ile doğrulandı.
+
 ## Render'a Artık Gerekmeyen Değişken
 
 - `PERENUAL_API_KEY` ve `PERENUAL_IDENTIFY_API_KEY` artık hiçbir yerde kullanılmıyor (Bakım Bilgisi/Bitki Ara kaldırıldığı için). Render'da tanımlıysa durmasının bir zararı yok, silmek istersen silebilirsin, zorunlu değil.

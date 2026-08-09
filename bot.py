@@ -368,20 +368,36 @@ async def send_chunks(update: Update, text: str, reply_markup: InlineKeyboardMar
 
 
 async def edit_or_send(update: Update, text: str, reply_markup: InlineKeyboardMarkup | None = None) -> None:
+    # Telegram tek mesaj icin ~4096 karakter siniri koyuyor. Metin bundan uzunsa
+    # (ör. cok kayitli bir sayfa, uzun notlar) once bunu parcalara ayirip ilk
+    # parcayi duzenle/gonder, kalanini yeni mesaj(lar) olarak gonder - aksi halde
+    # edit_text/reply_text sessizce basarisiz olup kullaniciya hicbir sey gitmiyordu.
+    parts = chunks(text)
+    first, rest = parts[0], parts[1:]
+    first_markup = reply_markup if not rest else None
     query = update.callback_query
     if query and query.message:
+        edited = False
         try:
-            await query.message.edit_text(text, reply_markup=reply_markup)
-            return
+            await query.message.edit_text(first, reply_markup=first_markup)
+            edited = True
         except BadRequest as exc:
             if "Message is not modified" in str(exc):
                 return
             if "message to edit not found" not in str(exc).lower() and "message can't be edited" not in str(exc).lower():
                 log.warning("edit failed: %s", exc)
-        try:
-            await query.message.reply_text(text, reply_markup=reply_markup)
-        except Exception:
-            log.exception("reply_text failed")
+        if not edited:
+            try:
+                await query.message.reply_text(first, reply_markup=first_markup)
+            except Exception:
+                log.exception("reply_text failed")
+                return
+        for i, part in enumerate(rest):
+            is_last = i == len(rest) - 1
+            try:
+                await query.message.reply_text(part, reply_markup=reply_markup if is_last else None)
+            except Exception:
+                log.exception("reply_text failed (chunk)")
         return
     await send_chunks(update, text, reply_markup)
 
@@ -5116,6 +5132,15 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         context.user_data.clear()
         await show_weather(update, text, monthly=True)
         return
+
+    # Buraya kadar hiçbir dal eşleşmediyse: flow set ama bu adımda serbest metin
+    # beklenmiyor (ör. tarih seçimi/kategori/malzeme gibi sadece buton bekleyen adımlar).
+    # Sessizce hiçbir şey yapmamak yerine kullanıcıyı bilgilendir.
+    await update.effective_message.reply_text(
+        "Bu adımda yazı yerine yukarıdaki butonlardan birini seçmen gerekiyor.",
+        reply_markup=back_cancel("m:main"),
+    )
+    return
 
 
 PHOTO_BATCH_MAX = 10
