@@ -91,6 +91,9 @@ AI_CLIENT = None
 GROQ_CLIENT = None
 RECORD_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 AI_LOG_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+SHEET_REFRESH_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=4)
+SHEET_REFRESHING: set[str] = set()
+SHEET_CACHE_LOCK = threading.RLock()
 
 
 class HealthHandler(BaseHTTPRequestHandler):
@@ -964,10 +967,7 @@ def _sheets_get_all_records(sheet_name: str) -> list[dict[str, Any]]:
     raise last_exc
 
 
-def records(sheet_name: str) -> list[dict[str, Any]]:
-    cached = RECORD_CACHE.get(sheet_name)
-    if cached and monotonic() - cached[0] < CACHE_TTL_SECONDS:
-        return [dict(row) for row in cached[1]]
+def _refresh_records(sheet_name: str) -> list[dict[str, Any]]:
     data = _sheets_get_all_records(sheet_name)
     for i, row in enumerate(data, start=2):
         row["_row"] = i
@@ -975,8 +975,50 @@ def records(sheet_name: str) -> list[dict[str, Any]]:
             row["_id"] = str(i - 1)
         else:
             row["_id"] = str(row.get("ID"))
-    RECORD_CACHE[sheet_name] = (monotonic(), [dict(row) for row in data])
-    return data
+    with SHEET_CACHE_LOCK:
+        RECORD_CACHE[sheet_name] = (monotonic(), [dict(row) for row in data])
+    return [dict(row) for row in data]
+
+
+def _refresh_records_in_background(sheet_name: str) -> None:
+    try:
+        _refresh_records(sheet_name)
+    except Exception:
+        log.exception("%s sayfası arka planda yenilenemedi", sheet_name)
+    finally:
+        with SHEET_CACHE_LOCK:
+            SHEET_REFRESHING.discard(sheet_name)
+
+
+def records(sheet_name: str) -> list[dict[str, Any]]:
+    with SHEET_CACHE_LOCK:
+        cached = RECORD_CACHE.get(sheet_name)
+        if cached:
+            age = monotonic() - cached[0]
+            if age >= CACHE_TTL_SECONDS and sheet_name not in SHEET_REFRESHING:
+                SHEET_REFRESHING.add(sheet_name)
+                SHEET_REFRESH_EXECUTOR.submit(_refresh_records_in_background, sheet_name)
+            return [dict(row) for row in cached[1]]
+
+    # Sadece uygulama açıldıktan sonraki ilk erişim bekler. Sonraki tüm okumalar
+    # anında önbellekten döner ve eski veri arka planda tazelenir.
+    return _refresh_records(sheet_name)
+
+
+async def warm_record_cache() -> None:
+    loop = asyncio.get_running_loop()
+    for sheet_name in SHEET:
+        with SHEET_CACHE_LOCK:
+            if sheet_name in RECORD_CACHE:
+                continue
+        try:
+            await loop.run_in_executor(SHEET_REFRESH_EXECUTOR, _refresh_records, sheet_name)
+        except Exception:
+            log.warning("%s sayfası başlangıçta ısıtılamadı; ilk kullanımda tekrar denenecek", sheet_name)
+            await asyncio.sleep(15)
+        # Başlangıçtaki başlık kontrolleri ve worker okumalarıyla birlikte Google
+        # Sheets kullanıcı başına dakika kotasını aşmamak için istekleri yay.
+        await asyncio.sleep(6)
 
 
 def next_id(sheet_name: str) -> int:
@@ -3401,9 +3443,19 @@ async def stock_alert_worker(app: Application) -> None:
 
 
 async def post_init(app: Application) -> None:
+    # Arka plan işçilerinin ilk turda aynı sayfalar için üst üste API isteği
+    # göndermesini engelle. Bunlar yüklendikten sonra Telegram polling başlar.
+    for sheet_name in ("alerts", "inventory", "reminders"):
+        try:
+            await asyncio.to_thread(_refresh_records, sheet_name)
+        except Exception:
+            log.exception("Kritik %s sayfası önbelleğe alınamadı", sheet_name)
+        await asyncio.sleep(1.25)
+
     app.create_task(reminder_worker(app))
     app.create_task(stock_alert_worker(app))
     app.create_task(weekly_backup_worker(app))
+    app.create_task(warm_record_cache())
 
 
 async def ask_ai(question: str, user_id: int, context: ContextTypes.DEFAULT_TYPE) -> str:
