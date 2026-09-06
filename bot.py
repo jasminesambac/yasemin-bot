@@ -71,7 +71,7 @@ PLANTNET_PROJECT = os.getenv("PLANTNET_PROJECT", "all").strip() or "all"
 PORT = int(os.getenv("PORT", "10000"))
 
 INVENTORY_HEADERS = ["ID", "Kategori", "Malzeme / Alet", "Başlangıç Miktarı", "Kullanılan", "Kalan Miktar", "Birim", "Görevi / Not", "Son_Kullanma", "CreatedAt"]
-HISTORY_HEADERS = ["ID", "Tarih", "Islem", "Malzeme", "Miktar", "Birim", "pH", "EC", "TDS", "Not", "CreatedAt"]
+HISTORY_HEADERS = ["ID", "Tarih", "Islem", "Malzeme", "Miktar", "Birim", "pH", "EC", "TDS", "Not"]
 KOMPOST_HEADERS = ["Tarih", "Islem", "Kullanilan_Malzeme_Miktar", "pH", "Not", "ID"]
 PH_HEADERS = ["ID", "Tarih", "Teneke_No", "pH", "Not", "CreatedAt"]
 EC_TDS_HEADERS = ["ID", "Tarih", "Kayit_Turu", "Hedef", "Teneke_No", "EC", "TDS", "Not", "CreatedAt"]
@@ -1024,6 +1024,12 @@ def init_sheets() -> None:
                 for row in values[1:]:
                     padded = row + [""] * (len(existing_headers) - len(row))
                     by_header = {header: padded[index] for index, header in enumerate(existing_headers)}
+                    if not str(by_header.get("Tarih", "")).strip() and str(by_header.get("CreatedAt", "")).strip():
+                        created_at = str(by_header["CreatedAt"]).strip()
+                        try:
+                            by_header["Tarih"] = datetime.fromisoformat(created_at).strftime(DATE_FMT)
+                        except ValueError:
+                            by_header["Tarih"] = created_at[:10]
                     reordered.append([by_header.get(header, "") for header in HISTORY_HEADERS])
                 ws.clear()
                 ws.update(
@@ -1032,7 +1038,7 @@ def init_sheets() -> None:
                     value_input_option="USER_ENTERED",
                 )
                 existing_headers = list(HISTORY_HEADERS)
-                log.info("History sütunları standart sıraya getirildi; ID ilk sütuna taşındı")
+                log.info("History sütunları A-J standart sırasına getirildi; ID ilk sütuna taşındı")
         # Eski History kayıtlarını bozmadan EC ve TDS'yi pH'ın hemen yanına yerleştir.
         if title == "history" and existing_headers and "pH" in existing_headers:
             insert_at = existing_headers.index("pH") + 2
@@ -1422,7 +1428,6 @@ def add_history(islem: str, malzeme: str = "", miktar: Any = "", birim: str = ""
         "EC": ec,
         "TDS": tds,
         "Not": note,
-        "CreatedAt": now().isoformat(timespec="seconds"),
     })
     return item_id
 
