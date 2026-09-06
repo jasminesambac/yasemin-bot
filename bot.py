@@ -1035,10 +1035,30 @@ def init_sheets() -> None:
                 ws.update(
                     reordered,
                     range_name=f"A1:{rowcol_to_a1(len(reordered), len(HISTORY_HEADERS))}",
-                    value_input_option="USER_ENTERED",
+                    value_input_option="RAW",
                 )
                 existing_headers = list(HISTORY_HEADERS)
                 log.info("History sütunları A-J standart sırasına getirildi; ID ilk sütuna taşındı")
+        # Eski taşıma sırasında '+' ile başlayan metinler Sheets tarafından formül
+        # olarak yorumlanmış olabilir. Formülü metne çevir; History'de formül tutulmaz.
+        if title == "history" and existing_headers:
+            formula_values = ws.get_all_values(value_render_option="FORMULA")
+            repaired = 0
+            for row_number, row in enumerate(formula_values[1:], start=2):
+                for header in ("Islem", "Malzeme", "Not"):
+                    if header not in existing_headers:
+                        continue
+                    col_number = existing_headers.index(header) + 1
+                    value = row[col_number - 1] if col_number <= len(row) else ""
+                    if isinstance(value, str) and value.startswith("=+"):
+                        ws.update(
+                            [[value[1:]]],
+                            range_name=rowcol_to_a1(row_number, col_number),
+                            value_input_option="RAW",
+                        )
+                        repaired += 1
+            if repaired:
+                log.info("History'de formül sanılan %s metin kaydı düzeltildi", repaired)
         # Eski History kayıtlarını bozmadan EC ve TDS'yi pH'ın hemen yanına yerleştir.
         if title == "history" and existing_headers and "pH" in existing_headers:
             insert_at = existing_headers.index("pH") + 2
