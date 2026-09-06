@@ -70,9 +70,10 @@ PLANTNET_PROJECT = os.getenv("PLANTNET_PROJECT", "all").strip() or "all"
 PORT = int(os.getenv("PORT", "10000"))
 
 INVENTORY_HEADERS = ["ID", "Kategori", "Malzeme / Alet", "Başlangıç Miktarı", "Kullanılan", "Kalan Miktar", "Birim", "Görevi / Not", "Son_Kullanma", "CreatedAt"]
-HISTORY_HEADERS = ["ID", "Tarih", "Islem", "Malzeme", "Miktar", "Birim", "pH", "Not", "CreatedAt"]
+HISTORY_HEADERS = ["ID", "Tarih", "Islem", "Malzeme", "Miktar", "Birim", "pH", "EC", "TDS", "Not", "CreatedAt"]
 KOMPOST_HEADERS = ["Tarih", "Islem", "Kullanilan_Malzeme_Miktar", "pH", "Not", "ID"]
 PH_HEADERS = ["ID", "Tarih", "Teneke_No", "pH", "Not", "CreatedAt"]
+EC_TDS_HEADERS = ["ID", "Tarih", "Teneke_No", "EC", "TDS", "Not", "CreatedAt"]
 REMINDER_HEADERS = ["ID", "Tarih", "Saat", "Metin", "Durum", "Chat_ID", "Tekrar", "Hafta_Gunu", "Ay_Gunu", "Gun_Araligi", "Bitis_Tarihi", "Kalan_Tekrar", "Yil_Ay", "CreatedAt"]
 OBSERVATION_HEADERS = ["ID", "Tarih", "Kategori", "Not", "Foto_File_ID", "AI_Yorum", "CreatedAt"]
 PLAN_HEADERS = ["ID", "Tarih", "Islem", "Hedef", "Malzeme_Miktar", "pH", "Not", "Durum", "CreatedAt", "CompletedAt"]
@@ -435,6 +436,7 @@ def records_group_menu() -> InlineKeyboardMarkup:
     return kb([
         [("📦 Stok", "m:stock"), ("📌 Sorun", "m:issues")],
         [("📜 Geçmiş", "m:history"), ("🔬 pH", "m:ph")],
+        [("⚡💧 EC / TDS", "m:ectds")],
         [("📔 Günlük", "m:diary"), ("📸 Gözlem", "m:observation")],
         [("📊 Rapor", "m:report")],
         [("🔙 Geri", "m:main")],
@@ -511,6 +513,15 @@ def ph_menu() -> InlineKeyboardMarkup:
         [("🔬 Son pH", "ph:last"), ("📊 Tüm pH (Tek Teneke)", "ph:one")],
         [("📋 Tüm Tenekelerin Tüm pH", "ph:all"), ("➕ pH Ekle", "ph:add")],
         [("❌ pH Sil", "ph:delete")],
+        [("🔙 Geri", "m:main")],
+    ])
+
+
+def measurement_menu() -> InlineKeyboardMarkup:
+    return kb([
+        [("⚡💧 Son EC / TDS", "ectds:last"), ("📊 Tek Teneke Geçmişi", "ectds:one")],
+        [("📋 Tüm Tenekeler", "ectds:all"), ("➕ EC / TDS Ekle", "ectds:add")],
+        [("❌ EC / TDS Sil", "ectds:delete")],
         [("🔙 Geri", "m:main")],
     ])
 
@@ -798,6 +809,31 @@ def ph_choice_menu(prefix: str = "histadd") -> InlineKeyboardMarkup:
     ])
 
 
+def measurement_choice_menu(metric: str) -> InlineKeyboardMarkup:
+    label = metric.upper()
+    unit = "µS" if metric == "ec" else "ppm"
+    presets = ["500", "1000", "1500", "2000", "2500"] if metric == "ec" else ["250", "500", "750", "1000", "1500"]
+    return kb([
+        [(f"{v} {unit}", f"histadd:{metric}:{v}") for v in presets[:3]],
+        [(f"{v} {unit}", f"histadd:{metric}:{v}") for v in presets[3:]],
+        [(f"✍️ Diğer {label} / Kendim Gireceğim", f"histadd:{metric}_custom")],
+        [("Ölçmedim", f"histadd:{metric}:")],
+        [("Geri", "m:history"), ("İptal", "cancel"), ("Ana Menü", "m:main")],
+    ])
+
+
+def standalone_measurement_choice_menu(metric: str) -> InlineKeyboardMarkup:
+    label = metric.upper()
+    unit = "µS" if metric == "ec" else "ppm"
+    presets = ["500", "1000", "1500", "2000", "2500"] if metric == "ec" else ["250", "500", "750", "1000", "1500"]
+    return kb([
+        [(f"{v} {unit}", f"ectds:{metric}:{v}") for v in presets[:3]],
+        [(f"{v} {unit}", f"ectds:{metric}:{v}") for v in presets[3:]],
+        [(f"✍️ Diğer {label} / Kendim Gireceğim", f"ectds:{metric}_custom")],
+        [("Geri", "m:ectds"), ("İptal", "cancel"), ("Ana Menü", "m:main")],
+    ])
+
+
 def compost_type_menu() -> InlineKeyboardMarkup:
     return kb([
         [("Kompost Karıştırma", "compadd:tur:Kompost Karıştırma")],
@@ -877,6 +913,7 @@ def init_sheets() -> None:
         "history": HISTORY_HEADERS,
         "Kompost": KOMPOST_HEADERS,
         "ph_records": PH_HEADERS,
+        "ec_tds_records": EC_TDS_HEADERS,
         "reminders": REMINDER_HEADERS,
         "observations": OBSERVATION_HEADERS,
         "plans": PLAN_HEADERS,
@@ -926,6 +963,14 @@ def init_sheets() -> None:
         except gspread.WorksheetNotFound:
             ws = spreadsheet.add_worksheet(title=title, rows=1000, cols=len(headers) + 2)
         existing_headers = ws.row_values(1)
+        # Eski History kayıtlarını bozmadan EC ve TDS'yi pH'ın hemen yanına yerleştir.
+        if title == "history" and existing_headers and "pH" in existing_headers:
+            insert_at = existing_headers.index("pH") + 2
+            for header in ("EC", "TDS"):
+                if header not in existing_headers:
+                    ws.insert_cols([[header]], col=insert_at)
+                    existing_headers.insert(insert_at - 1, header)
+                    insert_at += 1
         if not existing_headers:
             ws.append_row(headers)
         else:
@@ -1287,7 +1332,7 @@ def set_alert_value(key: str, value: str) -> None:
     append_record("alerts", ALERT_HEADERS, {"Key": key, "Value": value, "UpdatedAt": now().isoformat(timespec="seconds")})
 
 
-def add_history(islem: str, malzeme: str = "", miktar: Any = "", birim: str = "", ph: str = "", note: str = "", date: str | None = None) -> int:
+def add_history(islem: str, malzeme: str = "", miktar: Any = "", birim: str = "", ph: str = "", note: str = "", date: str | None = None, ec: str = "", tds: str = "") -> int:
     item_id = next_id("history")
     append_record("history", HISTORY_HEADERS, {
         "ID": item_id,
@@ -1297,6 +1342,8 @@ def add_history(islem: str, malzeme: str = "", miktar: Any = "", birim: str = ""
         "Miktar": miktar,
         "Birim": birim,
         "pH": ph,
+        "EC": ec,
+        "TDS": tds,
         "Not": note,
         "CreatedAt": now().isoformat(timespec="seconds"),
     })
@@ -1399,6 +1446,20 @@ def teneke_buttons(action: str) -> InlineKeyboardMarkup:
     return kb(rows)
 
 
+def measurement_teneke_buttons(action: str) -> InlineKeyboardMarkup:
+    sheet_name = "ec_tds_records"
+    fixed = ["Konteyner 1", "Konteyner 2", "Konteyner 3"] + [str(i) for i in range(1, 21)]
+    known = sorted(
+        {str(r.get("Teneke_No", "")).strip() for r in records(sheet_name) if str(r.get("Teneke_No", "")).strip()},
+        key=lambda x: int(x) if x.isdigit() else 999999,
+    )
+    choices = fixed + [t for t in known if t not in fixed]
+    rows = [[(t, f"ectdsteneke:{action}:{t}") for t in choices[i:i + 4]] for i in range(0, min(len(choices), 40), 4)]
+    rows.append([("Teneke Yaz", f"ectdsteneke:{action}:custom")])
+    rows.append([("Geri", "m:ectds"), ("İptal", "cancel"), ("Ana Menü", "m:main")])
+    return kb(rows)
+
+
 def row_id_text(row: dict[str, Any]) -> str:
     return str(row.get("ID") or row.get("_id") or "?")
 
@@ -1427,6 +1488,16 @@ def history_unit(row: dict[str, Any]) -> str:
     old = str(row.get("Kullanilan_Malzeme_Miktar") or row.get("Kullanılan_Malzeme_Miktar") or "").strip()
     parts = old.split()
     return parts[1] if len(parts) >= 2 else ""
+
+
+def history_measurements(row: dict[str, Any]) -> str:
+    parts = []
+    for header in ("pH", "EC", "TDS"):
+        value = str(row.get(header, "")).strip()
+        if value:
+            unit = " µS" if header == "EC" else " ppm" if header == "TDS" else ""
+            parts.append(f"{header} {value}{unit}")
+    return " | ".join(parts)
 
 
 def parse_material_summary(summary: Any) -> list[dict[str, Any]]:
@@ -1652,6 +1723,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         context.user_data.clear()
         await edit_or_send(update, "pH Yönetimi", ph_menu())
         return
+    if data == "m:ectds":
+        context.user_data.clear()
+        await edit_or_send(update, "EC / TDS Yönetimi", measurement_menu())
+        return
     if data == "m:history":
         context.user_data.clear()
         await edit_or_send(update, "Geçmiş Yönetimi", history_menu())
@@ -1781,6 +1856,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
     if data.startswith("ph:") or data.startswith("teneke:"):
         await handle_ph_callback(update, context, data)
+        return
+    if data.startswith(("ectds:", "ectdsteneke:")):
+        await handle_measurement_callback(update, context, data)
         return
     if data.startswith("hist:") or data.startswith("histadd:"):
         await handle_history_callback(update, context, data)
@@ -2095,6 +2173,81 @@ async def delete_last_ph_for_teneke(update: Update, teneke: str) -> None:
     await edit_or_send(update, f"Silindi: Teneke {teneke}, ID {row_id_text(row)}, pH {row.get('pH', '-')}", ph_menu())
 
 
+async def handle_measurement_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, data: str) -> None:
+    sheet_name = "ec_tds_records"
+    if data == "ectds:last":
+        await edit_or_send(update, "Teneke seç:", measurement_teneke_buttons("last"))
+        return
+    if data == "ectds:one":
+        await edit_or_send(update, "Teneke seç:", measurement_teneke_buttons("one"))
+        return
+    if data == "ectds:all":
+        grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for row in records(sheet_name):
+            grouped[str(row.get("Teneke_No", "Bilinmiyor"))].append(row)
+        if not grouped:
+            await edit_or_send(update, "EC / TDS kaydı yok.", measurement_menu())
+            return
+        text = "Tüm Tenekelerin Son 5 EC / TDS Kaydı\n\n"
+        for teneke in sorted(grouped, key=lambda x: int(x) if x.isdigit() else 999999):
+            text += f"Teneke {teneke}\n"
+            for row in grouped[teneke][-5:][::-1]:
+                text += f"ID {row_id_text(row)} - {row.get('Tarih', '-')}: EC {row.get('EC', '-')} µS | TDS {row.get('TDS', '-')} ppm"
+                if row.get("Not"):
+                    text += f" - {row.get('Not')}"
+                text += "\n"
+            text += "\n"
+        await edit_or_send(update, text[:MSG_LIMIT], measurement_menu())
+        return
+    if data == "ectds:add":
+        context.user_data["draft"] = {}
+        await edit_or_send(update, "Teneke veya konteyner seç:", measurement_teneke_buttons("add"))
+        return
+    if data == "ectds:delete":
+        context.user_data["flow"] = "ectds_delete"
+        await edit_or_send(update, "Silmek istediğin EC / TDS kaydının ID numarasını yaz.", back_cancel("m:ectds"))
+        return
+    if data == "ectds:ec_custom":
+        context.user_data["flow"] = "ectds_add_ec"
+        await edit_or_send(update, "EC değerini µS olarak yaz. Örn: 1400", back_cancel("m:ectds"))
+        return
+    if data.startswith("ectds:ec:"):
+        context.user_data.setdefault("draft", {})["ec"] = data.split(":", 2)[2]
+        await edit_or_send(update, "TDS değeri nedir?", standalone_measurement_choice_menu("tds"))
+        return
+    if data == "ectds:tds_custom":
+        context.user_data["flow"] = "ectds_add_tds"
+        await edit_or_send(update, "TDS değerini ppm olarak yaz. Örn: 700", back_cancel("m:ectds"))
+        return
+    if data.startswith("ectds:tds:"):
+        context.user_data.setdefault("draft", {})["tds"] = data.split(":", 2)[2]
+        context.user_data["flow"] = "ectds_add_note"
+        await edit_or_send(update, "Not yaz. Not yoksa '-' yaz.", back_cancel("m:ectds"))
+        return
+    if data.startswith("ectdsteneke:"):
+        _, action, teneke = data.split(":", 2)
+        if teneke == "custom":
+            context.user_data["flow"] = f"ectds_{action}_custom"
+            await edit_or_send(update, "Teneke numarasını yaz:", back_cancel("m:ectds"))
+            return
+        if action == "add":
+            context.user_data["draft"] = {"teneke": teneke}
+            await edit_or_send(update, f"{teneke}\n\nEC değeri nedir?", standalone_measurement_choice_menu("ec"))
+            return
+        rows = [r for r in records(sheet_name) if str(r.get("Teneke_No", "")).strip() == teneke]
+        if not rows:
+            await edit_or_send(update, f"Teneke {teneke} için EC / TDS kaydı yok.", measurement_menu())
+            return
+        selected = rows[-1:] if action == "last" else rows
+        text = f"Teneke {teneke} - {'Son' if action == 'last' else 'Tüm'} EC / TDS\n\n"
+        for row in selected:
+            text += f"ID {row_id_text(row)} - {row.get('Tarih', '-')}: EC {row.get('EC', '-')} µS | TDS {row.get('TDS', '-')} ppm"
+            if row.get("Not"):
+                text += f" - {row.get('Not')}"
+            text += "\n"
+        await edit_or_send(update, text, measurement_menu())
+
+
 async def handle_history_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, data: str) -> None:
     if data == "hist:last10":
         await show_history(update, 10)
@@ -2154,6 +2307,22 @@ async def handle_history_callback(update: Update, context: ContextTypes.DEFAULT_
         return
     if data.startswith("histadd:ph:"):
         context.user_data.setdefault("draft", {})["ph"] = data.split(":", 2)[2]
+        await edit_or_send(update, "EC değeri nedir?", measurement_choice_menu("ec"))
+        return
+    if data == "histadd:ec_custom":
+        context.user_data["flow"] = "histadd_custom_ec"
+        await edit_or_send(update, "EC değerini µS olarak yaz. Örn: 1400", back_cancel("m:history"))
+        return
+    if data.startswith("histadd:ec:"):
+        context.user_data.setdefault("draft", {})["ec"] = data.split(":", 2)[2]
+        await edit_or_send(update, "TDS değeri nedir?", measurement_choice_menu("tds"))
+        return
+    if data == "histadd:tds_custom":
+        context.user_data["flow"] = "histadd_custom_tds"
+        await edit_or_send(update, "TDS değerini ppm olarak yaz. Örn: 700", back_cancel("m:history"))
+        return
+    if data.startswith("histadd:tds:"):
+        context.user_data.setdefault("draft", {})["tds"] = data.split(":", 2)[2]
         context.user_data["flow"] = "histadd_note"
         await edit_or_send(update, "Not yaz. Ne için yaptığını buraya yazabilirsin. Not yoksa '-' yaz.", back_cancel("m:history"))
         return
@@ -2467,8 +2636,8 @@ async def show_history(update: Update, count: int) -> None:
     for row in rows[-count:][::-1]:
         text += f"ID {row_id_text(row)} - {row.get('Tarih', '-')}: {row.get('Islem', '-')}\n"
         text += f"{history_material(row) or '-'} {history_amount(row)} {history_unit(row)}"
-        if row.get("pH"):
-            text += f" | pH {row.get('pH')}"
+        if history_measurements(row):
+            text += f" | {history_measurements(row)}"
         if row.get("Not"):
             text += f"\nNot: {row.get('Not')}"
         text += "\n\n"
@@ -2495,8 +2664,8 @@ async def show_history_page(update: Update, page: int = 0, page_size: int = 10) 
     for row in page_rows:
         text += f"ID {row_id_text(row)} - {row.get('Tarih', '-')}: {row.get('Islem', '-')}\n"
         text += f"{history_material(row) or '-'} {history_amount(row)} {history_unit(row)}"
-        if row.get("pH"):
-            text += f" | pH {row.get('pH')}"
+        if history_measurements(row):
+            text += f" | {history_measurements(row)}"
         if row.get("Not"):
             text += f"\nNot: {row.get('Not')}"
         text += "\n\n"
@@ -2526,8 +2695,8 @@ async def send_history_file(update: Update) -> None:
     for row in rows[::-1]:
         text += f"ID {row_id_text(row)} - {row.get('Tarih', '-')}: {row.get('Islem', '-')}\n"
         text += f"{history_material(row) or '-'} {history_amount(row)} {history_unit(row)}"
-        if row.get("pH"):
-            text += f" | pH {row.get('pH')}"
+        if history_measurements(row):
+            text += f" | {history_measurements(row)}"
         if row.get("Not"):
             text += f"\nNot: {row.get('Not')}"
         text += "\n\n"
@@ -4465,6 +4634,59 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         context.user_data.clear()
         return
 
+    if flow == "ectds_add_custom":
+        context.user_data["draft"] = {"teneke": text}
+        context.user_data.pop("flow", None)
+        await update.effective_message.reply_text("EC değeri nedir?", reply_markup=standalone_measurement_choice_menu("ec"))
+        return
+    if flow in ("ectds_last_custom", "ectds_one_custom"):
+        action = "last" if flow == "ectds_last_custom" else "one"
+        context.user_data.pop("flow", None)
+        await handle_measurement_callback(update, context, f"ectdsteneke:{action}:{text}")
+        return
+    if flow == "ectds_add_ec":
+        try:
+            value = parse_decimal(text)
+            if value < 0:
+                raise ValueError
+        except Exception:
+            await update.effective_message.reply_text("EC sıfır veya daha büyük bir µS değeri olmalı. Örn: 1400", reply_markup=back_cancel("m:ectds"))
+            return
+        context.user_data["draft"]["ec"] = str(text).replace(",", ".")
+        context.user_data["flow"] = "ectds_add_tds"
+        await update.effective_message.reply_text("TDS değerini ppm olarak yaz. Örn: 700", reply_markup=back_cancel("m:ectds"))
+        return
+    if flow == "ectds_add_tds":
+        try:
+            value = parse_decimal(text)
+            if value < 0:
+                raise ValueError
+        except Exception:
+            await update.effective_message.reply_text("TDS sıfır veya daha büyük bir ppm değeri olmalı. Örn: 700", reply_markup=back_cancel("m:ectds"))
+            return
+        context.user_data["draft"]["tds"] = str(text).replace(",", ".")
+        context.user_data["flow"] = "ectds_add_note"
+        await update.effective_message.reply_text("Not yaz. Not yoksa '-' yaz.", reply_markup=back_cancel("m:ectds"))
+        return
+    if flow == "ectds_add_note":
+        d = context.user_data["draft"]
+        item_id = next_id("ec_tds_records")
+        append_record("ec_tds_records", EC_TDS_HEADERS, {
+            "ID": item_id, "Tarih": today_str(), "Teneke_No": d["teneke"],
+            "EC": d["ec"], "TDS": d["tds"], "Not": "" if text == "-" else text,
+            "CreatedAt": now().isoformat(timespec="seconds"),
+        })
+        context.user_data.clear()
+        await update.effective_message.reply_text(
+            f"EC / TDS kaydedildi. ID {item_id} - Teneke {d['teneke']} | EC {d['ec']} µS | TDS {d['tds']} ppm",
+            reply_markup=measurement_menu(),
+        )
+        return
+    if flow == "ectds_delete":
+        await delete_by_id(update, "ec_tds_records", text, "EC / TDS kaydı silindi.", measurement_menu())
+        context.user_data.clear()
+        return
+
     if flow == "history_date":
         date = parse_date(text)
         if not date:
@@ -4523,6 +4745,30 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             await update.effective_message.reply_text("pH 0 ile 14 arasında sayı olmalı. Örn: 6.3", reply_markup=back_cancel("m:history"))
             return
         context.user_data.setdefault("draft", {})["ph"] = str(text).replace(",", ".")
+        context.user_data.pop("flow", None)
+        await update.effective_message.reply_text("EC değeri nedir?", reply_markup=measurement_choice_menu("ec"))
+        return
+    if flow == "histadd_custom_ec":
+        try:
+            value = parse_decimal(text)
+            if value < 0:
+                raise ValueError
+        except Exception:
+            await update.effective_message.reply_text("EC sıfır veya daha büyük bir µS değeri olmalı. Örn: 1400", reply_markup=back_cancel("m:history"))
+            return
+        context.user_data.setdefault("draft", {})["ec"] = str(text).replace(",", ".")
+        context.user_data.pop("flow", None)
+        await update.effective_message.reply_text("TDS değeri nedir?", reply_markup=measurement_choice_menu("tds"))
+        return
+    if flow == "histadd_custom_tds":
+        try:
+            value = parse_decimal(text)
+            if value < 0:
+                raise ValueError
+        except Exception:
+            await update.effective_message.reply_text("TDS sıfır veya daha büyük bir ppm değeri olmalı. Örn: 700", reply_markup=back_cancel("m:history"))
+            return
+        context.user_data.setdefault("draft", {})["tds"] = str(text).replace(",", ".")
         context.user_data["flow"] = "histadd_note"
         await update.effective_message.reply_text("Not yaz. Ne için yaptığını buraya yazabilirsin. Not yoksa '-' yaz.", reply_markup=back_cancel("m:history"))
         return
@@ -4559,7 +4805,7 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             if undo:
                 undo_items.append(undo)
         material_summary = "; ".join(f"{format_decimal(i['amount'])} {i['unit']} {i['material']}" for i in items)
-        add_history(d["type"], material_summary, "-", "", d.get("ph", ""), note, d["date"])
+        add_history(d["type"], material_summary, "-", "", d.get("ph", ""), note, d["date"], d.get("ec", ""), d.get("tds", ""))
         if undo_items:
             context.user_data["last_stock_use"] = undo_items[-1]
         context.user_data.pop("flow", None)
