@@ -70,12 +70,12 @@ PLANTNET_API_KEY = os.getenv("PLANTNET_API_KEY", "").strip()
 PLANTNET_PROJECT = os.getenv("PLANTNET_PROJECT", "all").strip() or "all"
 PORT = int(os.getenv("PORT", "10000"))
 
-INVENTORY_HEADERS = ["ID", "Kategori", "Malzeme / Alet", "Başlangıç Miktarı", "Kullanılan", "Kalan Miktar", "Birim", "Görevi / Not", "Son_Kullanma", "CreatedAt"]
+INVENTORY_HEADERS = ["ID", "Tarih", "Kategori", "Malzeme / Alet", "Başlangıç Miktarı", "Kullanılan", "Kalan Miktar", "Birim", "Görevi / Not", "Son_Kullanma"]
 HISTORY_HEADERS = ["ID", "Tarih", "Islem", "Malzeme", "Miktar", "Birim", "pH", "EC", "TDS", "Not"]
-KOMPOST_HEADERS = ["Tarih", "Islem", "Kullanilan_Malzeme_Miktar", "pH", "Not", "ID"]
-PH_HEADERS = ["ID", "Tarih", "Teneke_No", "pH", "Not", "CreatedAt"]
-EC_TDS_HEADERS = ["ID", "Tarih", "Kayit_Turu", "Hedef", "Teneke_No", "EC", "TDS", "Not", "CreatedAt"]
-REMINDER_HEADERS = ["ID", "Tarih", "Saat", "Metin", "Durum", "Chat_ID", "Tekrar", "Hafta_Gunu", "Ay_Gunu", "Gun_Araligi", "Bitis_Tarihi", "Kalan_Tekrar", "Yil_Ay", "CreatedAt"]
+KOMPOST_HEADERS = ["ID", "Tarih", "Islem", "Kullanilan_Malzeme_Miktar", "pH", "Not"]
+PH_HEADERS = ["ID", "Tarih", "Teneke_No", "Bolge", "pH", "Not"]
+EC_TDS_HEADERS = ["ID", "Tarih", "Kayit_Turu", "Hedef", "Teneke_No", "EC", "TDS", "Not"]
+REMINDER_HEADERS = ["ID", "Tarih", "Saat", "Metin", "Durum", "Chat_ID", "Tekrar", "Hafta_Gunu", "Ay_Gunu", "Gun_Araligi", "Bitis_Tarihi", "Kalan_Tekrar", "Yil_Ay"]
 OBSERVATION_HEADERS = ["ID", "Tarih", "Kategori", "Not", "Foto_File_ID", "AI_Yorum", "CreatedAt"]
 PLAN_HEADERS = ["ID", "Tarih", "Islem", "Hedef", "Malzeme_Miktar", "pH", "Not", "Durum", "CreatedAt", "CompletedAt"]
 AREA_HEADERS = ["ID", "Alan", "Not", "Durum", "CreatedAt"]
@@ -1055,6 +1055,34 @@ def init_sheets() -> None:
                     ws.insert_cols([[header]], col=insert_at)
                     existing_headers.insert(insert_at - 1, header)
                     insert_at += 1
+        canonical_sheets = {"inventory", "ph_records", "reminders", "Kompost", "ec_tds_records"}
+        if title in canonical_sheets and existing_headers:
+            if existing_headers != headers:
+                values = ws.get_all_values()
+                reordered = [headers]
+                for row_number, row in enumerate(values[1:], start=2):
+                    padded = row + [""] * (len(existing_headers) - len(row))
+                    by_header = {header: padded[index] for index, header in enumerate(existing_headers)}
+                    if not str(by_header.get("ID", "")).strip():
+                        by_header["ID"] = str(row_number - 1)
+                    if not str(by_header.get("Tarih", "")).strip() and str(by_header.get("CreatedAt", "")).strip():
+                        created_at = str(by_header["CreatedAt"]).strip()
+                        try:
+                            by_header["Tarih"] = datetime.fromisoformat(created_at).strftime(DATE_FMT)
+                        except ValueError:
+                            by_header["Tarih"] = created_at[:10]
+                    # Eski reminders şemasındaki Islem ve Metin aynı bilgiydi.
+                    if title == "reminders" and not str(by_header.get("Metin", "")).strip():
+                        by_header["Metin"] = by_header.get("Islem", "")
+                    reordered.append([by_header.get(header, "") for header in headers])
+                ws.clear()
+                ws.update(
+                    reordered,
+                    range_name=f"A1:{rowcol_to_a1(len(reordered), len(headers))}",
+                    value_input_option="RAW",
+                )
+                existing_headers = list(headers)
+                log.info("%s sütunları ID-Tarih öncelikli standart sıraya getirildi", title)
         if not existing_headers:
             ws.append_row(headers)
         else:
@@ -1489,7 +1517,6 @@ def add_ec_tds_record(category: str, target: str, ec: str, tds: str, note: str =
         "EC": ec,
         "TDS": tds,
         "Not": note,
-        "CreatedAt": now().isoformat(timespec="seconds"),
     })
     return item_id
 
@@ -4156,6 +4183,7 @@ async def execute_quick_log(update: Update, data: dict[str, Any]) -> None:
             item_id = next_id("inventory")
             append_record("inventory", INVENTORY_HEADERS, {
                 "ID": item_id,
+                "Tarih": today_str(),
                 "Kategori": "Diğer",
                 "Malzeme / Alet": material,
                 "Başlangıç Miktarı": format_decimal(amount),
@@ -4163,7 +4191,6 @@ async def execute_quick_log(update: Update, data: dict[str, Any]) -> None:
                 "Kalan Miktar": format_decimal(amount),
                 "Birim": unit,
                 "Görevi / Not": note,
-                "CreatedAt": now().isoformat(timespec="seconds"),
             })
             add_history("ENVANTERE EKLENDİ", material, format_decimal(amount), unit, "", note)
             await edit_or_send(update, f"Stoğa eklendi: {material} ({format_decimal(amount)} {unit})", main_menu())
@@ -4177,9 +4204,9 @@ async def execute_quick_log(update: Update, data: dict[str, Any]) -> None:
                 "ID": item_id,
                 "Tarih": today_str(),
                 "Teneke_No": teneke,
+                "Bolge": "",
                 "pH": format_decimal(ph_value),
                 "Not": note,
-                "CreatedAt": now().isoformat(timespec="seconds"),
             })
             await edit_or_send(update, f"pH kaydedildi: Teneke {teneke} - pH {format_decimal(ph_value)}", main_menu())
             return
@@ -4733,6 +4760,7 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         item_id = next_id("inventory")
         append_record("inventory", INVENTORY_HEADERS, {
             "ID": item_id,
+            "Tarih": today_str(),
             "Kategori": d["category"],
             "Malzeme / Alet": d["name"],
             "Başlangıç Miktarı": d["amount"],
@@ -4741,7 +4769,6 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             "Birim": d["unit"],
             "Görevi / Not": d.get("note", ""),
             "Son_Kullanma": expiry,
-            "CreatedAt": now().isoformat(timespec="seconds"),
         })
         add_history("ENVANTERE EKLENDİ", d["name"], d["amount"], d["unit"], "", d.get("note", ""))
         context.user_data.clear()
@@ -4804,9 +4831,9 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             "ID": item_id,
             "Tarih": today_str(),
             "Teneke_No": d["teneke"],
+            "Bolge": "",
             "pH": d["ph"],
             "Not": "" if text == "-" else text,
-            "CreatedAt": now().isoformat(timespec="seconds"),
         })
         context.user_data.clear()
         await update.effective_message.reply_text(f"pH kaydedildi. ID {item_id} - Teneke {d['teneke']} pH {d['ph']}", reply_markup=ph_menu())
@@ -5098,12 +5125,12 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             full_note += f"\n{note}"
         item_id = next_id("Kompost")
         append_record("Kompost", KOMPOST_HEADERS, {
+            "ID": item_id,
             "Tarih": d["date"],
             "Islem": d["type"],
             "Kullanilan_Malzeme_Miktar": material_summary,
             "pH": d.get("ph", ""),
             "Not": full_note,
-            "ID": item_id,
         })
         if d.get("ph"):
             for container in containers:
@@ -5111,9 +5138,9 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                     "ID": next_id("ph_records"),
                     "Tarih": d["date"],
                     "Teneke_No": container,
+                    "Bolge": "",
                     "pH": d.get("ph", ""),
                     "Not": f"Kompost ID {item_id} - {d['type']}",
-                    "CreatedAt": now().isoformat(timespec="seconds"),
                 })
         if undo_items:
             context.user_data["last_stock_use"] = undo_items[-1]
@@ -5564,7 +5591,6 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             "Bitis_Tarihi": d.get("end_date", ""),
             "Kalan_Tekrar": d.get("repeat_count", ""),
             "Yil_Ay": d.get("yearly_month", ""),
-            "CreatedAt": now().isoformat(timespec="seconds"),
         }
         append_record("reminders", REMINDER_HEADERS, payload)
         context.user_data.clear()
