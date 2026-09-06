@@ -1017,6 +1017,22 @@ def init_sheets() -> None:
                 ws.delete_columns(legacy_idx + 1)
                 existing_headers.pop(legacy_idx)
                 log.info("History birleşik malzeme sütunu yeni alanlara taşındı ve kaldırıldı")
+        if title == "history" and existing_headers and all(header in existing_headers for header in HISTORY_HEADERS):
+            if existing_headers[:len(HISTORY_HEADERS)] != HISTORY_HEADERS or len(existing_headers) != len(HISTORY_HEADERS):
+                values = ws.get_all_values()
+                reordered = [HISTORY_HEADERS]
+                for row in values[1:]:
+                    padded = row + [""] * (len(existing_headers) - len(row))
+                    by_header = {header: padded[index] for index, header in enumerate(existing_headers)}
+                    reordered.append([by_header.get(header, "") for header in HISTORY_HEADERS])
+                ws.clear()
+                ws.update(
+                    reordered,
+                    range_name=f"A1:{rowcol_to_a1(len(reordered), len(HISTORY_HEADERS))}",
+                    value_input_option="USER_ENTERED",
+                )
+                existing_headers = list(HISTORY_HEADERS)
+                log.info("History sütunları standart sıraya getirildi; ID ilk sütuna taşındı")
         # Eski History kayıtlarını bozmadan EC ve TDS'yi pH'ın hemen yanına yerleştir.
         if title == "history" and existing_headers and "pH" in existing_headers:
             insert_at = existing_headers.index("pH") + 2
@@ -4912,7 +4928,7 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             if undo:
                 undo_items.append(undo)
         material_summary = "; ".join(f"{format_decimal(i['amount'])} {i['unit']} {i['material']}" for i in items)
-        add_history(d["type"], material_summary, "-", "", d.get("ph", ""), note, d["date"], d.get("ec", ""), d.get("tds", ""))
+        add_history(d["type"], material_summary, "", "", d.get("ph", ""), note, d["date"], d.get("ec", ""), d.get("tds", ""))
         if d.get("ec") or d.get("tds"):
             category = ec_tds_category(d.get("type", ""))
             add_ec_tds_record(category, material_summary or d.get("type", "Genel"), d.get("ec", ""), d.get("tds", ""), note, d["date"])
