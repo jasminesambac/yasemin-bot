@@ -18,6 +18,7 @@ from typing import Any
 
 import gspread
 import requests
+from gspread.utils import rowcol_to_a1
 from oauth2client.service_account import ServiceAccountCredentials
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputFile, KeyboardButton, ReplyKeyboardMarkup, Update
 from telegram.constants import ChatAction
@@ -974,6 +975,48 @@ def init_sheets() -> None:
         except gspread.WorksheetNotFound:
             ws = spreadsheet.add_worksheet(title=title, rows=1000, cols=len(headers) + 2)
         existing_headers = ws.row_values(1)
+        # Eski History şemasındaki birleşik malzeme alanını yeni, tekil
+        # Malzeme/Miktar/Birim alanlarına taşı ve mükerrer sütunu kaldır.
+        if title == "history" and existing_headers:
+            legacy_headers = ("Kullanilan_Malzeme_Miktar", "Kullanılan_Malzeme_Miktar")
+            legacy_header = next((name for name in legacy_headers if name in existing_headers), None)
+            if legacy_header:
+                for header in ("Malzeme", "Miktar", "Birim"):
+                    if header not in existing_headers:
+                        ws.update_cell(1, len(existing_headers) + 1, header)
+                        existing_headers.append(header)
+
+                values = ws.get_all_values()
+                legacy_idx = existing_headers.index(legacy_header)
+                material_idx = existing_headers.index("Malzeme")
+                amount_idx = existing_headers.index("Miktar")
+                unit_idx = existing_headers.index("Birim")
+                updates = []
+                for row_number, row in enumerate(values[1:], start=2):
+                    padded = row + [""] * (len(existing_headers) - len(row))
+                    legacy_value = padded[legacy_idx].strip()
+                    if not legacy_value:
+                        continue
+                    parts = legacy_value.split()
+                    starts_with_amount = bool(parts and re.fullmatch(r"\d+(?:[.,]\d+)?(?:-\d+(?:[.,]\d+)?)?", parts[0]))
+                    parsed_amount = parts[0] if starts_with_amount else ""
+                    parsed_unit = parts[1] if starts_with_amount and len(parts) >= 2 else ""
+                    parsed_material = " ".join(parts[2:]) if starts_with_amount and len(parts) >= 3 else legacy_value
+                    row_updates = {}
+                    if not padded[material_idx].strip():
+                        row_updates["Malzeme"] = parsed_material
+                    if not padded[amount_idx].strip() and parsed_amount:
+                        row_updates["Miktar"] = parsed_amount
+                    if not padded[unit_idx].strip() and parsed_unit:
+                        row_updates["Birim"] = parsed_unit
+                    for header, value in row_updates.items():
+                        col = existing_headers.index(header) + 1
+                        updates.append({"range": rowcol_to_a1(row_number, col), "values": [[value]]})
+                if updates:
+                    ws.batch_update(updates)
+                ws.delete_columns(legacy_idx + 1)
+                existing_headers.pop(legacy_idx)
+                log.info("History birleşik malzeme sütunu yeni alanlara taşındı ve kaldırıldı")
         # Eski History kayıtlarını bozmadan EC ve TDS'yi pH'ın hemen yanına yerleştir.
         if title == "history" and existing_headers and "pH" in existing_headers:
             insert_at = existing_headers.index("pH") + 2
