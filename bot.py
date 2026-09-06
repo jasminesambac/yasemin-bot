@@ -73,7 +73,7 @@ INVENTORY_HEADERS = ["ID", "Kategori", "Malzeme / Alet", "Başlangıç Miktarı"
 HISTORY_HEADERS = ["ID", "Tarih", "Islem", "Malzeme", "Miktar", "Birim", "pH", "EC", "TDS", "Not", "CreatedAt"]
 KOMPOST_HEADERS = ["Tarih", "Islem", "Kullanilan_Malzeme_Miktar", "pH", "Not", "ID"]
 PH_HEADERS = ["ID", "Tarih", "Teneke_No", "pH", "Not", "CreatedAt"]
-EC_TDS_HEADERS = ["ID", "Tarih", "Teneke_No", "EC", "TDS", "Not", "CreatedAt"]
+EC_TDS_HEADERS = ["ID", "Tarih", "Kayit_Turu", "Hedef", "Teneke_No", "EC", "TDS", "Not", "CreatedAt"]
 REMINDER_HEADERS = ["ID", "Tarih", "Saat", "Metin", "Durum", "Chat_ID", "Tekrar", "Hafta_Gunu", "Ay_Gunu", "Gun_Araligi", "Bitis_Tarihi", "Kalan_Tekrar", "Yil_Ay", "CreatedAt"]
 OBSERVATION_HEADERS = ["ID", "Tarih", "Kategori", "Not", "Foto_File_ID", "AI_Yorum", "CreatedAt"]
 PLAN_HEADERS = ["ID", "Tarih", "Islem", "Hedef", "Malzeme_Miktar", "pH", "Not", "Durum", "CreatedAt", "CompletedAt"]
@@ -519,10 +519,21 @@ def ph_menu() -> InlineKeyboardMarkup:
 
 def measurement_menu() -> InlineKeyboardMarkup:
     return kb([
-        [("⚡💧 Son EC / TDS", "ectds:last"), ("📊 Tek Teneke Geçmişi", "ectds:one")],
-        [("📋 Tüm Tenekeler", "ectds:all"), ("➕ EC / TDS Ekle", "ectds:add")],
+        [("⚡💧 Son Ölçümler", "ectds:last"), ("🪴 Teneke / Konteyner", "ectds:one")],
+        [("💦 Sulama", "ectds:filter:Sulama"), ("🌿 Gübreleme", "ectds:filter:Gübreleme")],
+        [("🌫️ Sisleme", "ectds:filter:Sisleme"), ("📋 Genel", "ectds:filter:Genel")],
+        [("📊 Tüm Ölçümler", "ectds:all"), ("➕ EC / TDS Ekle", "ectds:add")],
         [("❌ EC / TDS Sil", "ectds:delete")],
         [("🔙 Geri", "m:main")],
+    ])
+
+
+def measurement_type_menu() -> InlineKeyboardMarkup:
+    return kb([
+        [("🪴 Teneke / Konteyner", "ectds:type:Teneke/Konteyner")],
+        [("💦 Sulama", "ectds:type:Sulama"), ("🌿 Gübreleme", "ectds:type:Gübreleme")],
+        [("🌫️ Sisleme", "ectds:type:Sisleme"), ("📋 Genel", "ectds:type:Genel")],
+        [("Geri", "m:ectds"), ("İptal", "cancel"), ("Ana Menü", "m:main")],
     ])
 
 
@@ -971,6 +982,13 @@ def init_sheets() -> None:
                     ws.insert_cols([[header]], col=insert_at)
                     existing_headers.insert(insert_at - 1, header)
                     insert_at += 1
+        if title == "ec_tds_records" and existing_headers:
+            insert_at = 3
+            for header in ("Kayit_Turu", "Hedef"):
+                if header not in existing_headers:
+                    ws.insert_cols([[header]], col=insert_at)
+                    existing_headers.insert(insert_at - 1, header)
+                    insert_at += 1
         if not existing_headers:
             ws.append_row(headers)
         else:
@@ -1350,6 +1368,33 @@ def add_history(islem: str, malzeme: str = "", miktar: Any = "", birim: str = ""
     return item_id
 
 
+def ec_tds_category(operation: Any) -> str:
+    value = normalize_name(operation)
+    if "sisle" in value:
+        return "Sisleme"
+    if "gübre" in value or "gubre" in value or "besin" in value:
+        return "Gübreleme"
+    if "sula" in value:
+        return "Sulama"
+    return "Genel"
+
+
+def add_ec_tds_record(category: str, target: str, ec: str, tds: str, note: str = "", date: str | None = None, teneke: str = "") -> int:
+    item_id = next_id("ec_tds_records")
+    append_record("ec_tds_records", EC_TDS_HEADERS, {
+        "ID": item_id,
+        "Tarih": date or today_str(),
+        "Kayit_Turu": category,
+        "Hedef": target,
+        "Teneke_No": teneke,
+        "EC": ec,
+        "TDS": tds,
+        "Not": note,
+        "CreatedAt": now().isoformat(timespec="seconds"),
+    })
+    return item_id
+
+
 def use_stock(name: str, amount: float, unit: str, op_type: str, note: str = "", date: str | None = None, ph: str = "", record_history: bool = True) -> tuple[bool, str, dict[str, Any] | None]:
     item = find_inventory_by_name(name)
     if not item:
@@ -1450,7 +1495,8 @@ def measurement_teneke_buttons(action: str) -> InlineKeyboardMarkup:
     sheet_name = "ec_tds_records"
     fixed = ["Konteyner 1", "Konteyner 2", "Konteyner 3"] + [str(i) for i in range(1, 21)]
     known = sorted(
-        {str(r.get("Teneke_No", "")).strip() for r in records(sheet_name) if str(r.get("Teneke_No", "")).strip()},
+        {str(r.get("Teneke_No") or r.get("Hedef") or "").strip() for r in records(sheet_name)
+         if str(r.get("Kayit_Turu") or "Teneke/Konteyner") == "Teneke/Konteyner" and str(r.get("Teneke_No") or r.get("Hedef") or "").strip()},
         key=lambda x: int(x) if x.isdigit() else 999999,
     )
     choices = fixed + [t for t in known if t not in fixed]
@@ -1458,6 +1504,16 @@ def measurement_teneke_buttons(action: str) -> InlineKeyboardMarkup:
     rows.append([("Teneke Yaz", f"ectdsteneke:{action}:custom")])
     rows.append([("Geri", "m:ectds"), ("İptal", "cancel"), ("Ana Menü", "m:main")])
     return kb(rows)
+
+
+def measurement_row_text(row: dict[str, Any]) -> str:
+    category = str(row.get("Kayit_Turu") or "Teneke/Konteyner")
+    target = str(row.get("Hedef") or row.get("Teneke_No") or category)
+    text = f"ID {row_id_text(row)} - {row.get('Tarih', '-')}: {category} / {target}\n"
+    text += f"EC {row.get('EC', '-')} µS | TDS {row.get('TDS', '-')} ppm"
+    if row.get("Not"):
+        text += f"\nNot: {row.get('Not')}"
+    return text
 
 
 def row_id_text(row: dict[str, Any]) -> str:
@@ -2176,32 +2232,44 @@ async def delete_last_ph_for_teneke(update: Update, teneke: str) -> None:
 async def handle_measurement_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, data: str) -> None:
     sheet_name = "ec_tds_records"
     if data == "ectds:last":
-        await edit_or_send(update, "Teneke seç:", measurement_teneke_buttons("last"))
+        rows = records(sheet_name)[-10:][::-1]
+        if not rows:
+            await edit_or_send(update, "EC / TDS kaydı yok.", measurement_menu())
+            return
+        await edit_or_send(update, "Son EC / TDS Ölçümleri\n\n" + "\n\n".join(measurement_row_text(r) for r in rows), measurement_menu())
         return
     if data == "ectds:one":
         await edit_or_send(update, "Teneke seç:", measurement_teneke_buttons("one"))
         return
     if data == "ectds:all":
-        grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
-        for row in records(sheet_name):
-            grouped[str(row.get("Teneke_No", "Bilinmiyor"))].append(row)
-        if not grouped:
+        rows = records(sheet_name)
+        if not rows:
             await edit_or_send(update, "EC / TDS kaydı yok.", measurement_menu())
             return
-        text = "Tüm Tenekelerin Son 5 EC / TDS Kaydı\n\n"
-        for teneke in sorted(grouped, key=lambda x: int(x) if x.isdigit() else 999999):
-            text += f"Teneke {teneke}\n"
-            for row in grouped[teneke][-5:][::-1]:
-                text += f"ID {row_id_text(row)} - {row.get('Tarih', '-')}: EC {row.get('EC', '-')} µS | TDS {row.get('TDS', '-')} ppm"
-                if row.get("Not"):
-                    text += f" - {row.get('Not')}"
-                text += "\n"
-            text += "\n"
+        text = "Tüm EC / TDS Ölçümleri\n\n" + "\n\n".join(measurement_row_text(r) for r in rows[::-1])
+        await edit_or_send(update, text[:MSG_LIMIT], measurement_menu())
+        return
+    if data.startswith("ectds:filter:"):
+        category = data.split(":", 2)[2]
+        rows = [r for r in records(sheet_name) if str(r.get("Kayit_Turu") or "Teneke/Konteyner") == category]
+        if not rows:
+            await edit_or_send(update, f"{category} için EC / TDS kaydı yok.", measurement_menu())
+            return
+        text = f"{category} EC / TDS Kayıtları\n\n" + "\n\n".join(measurement_row_text(r) for r in rows[::-1])
         await edit_or_send(update, text[:MSG_LIMIT], measurement_menu())
         return
     if data == "ectds:add":
         context.user_data["draft"] = {}
-        await edit_or_send(update, "Teneke veya konteyner seç:", measurement_teneke_buttons("add"))
+        await edit_or_send(update, "Ölçüm türünü seç:", measurement_type_menu())
+        return
+    if data.startswith("ectds:type:"):
+        category = data.split(":", 2)[2]
+        context.user_data["draft"] = {"category": category}
+        if category == "Teneke/Konteyner":
+            await edit_or_send(update, "Teneke veya konteyner seç:", measurement_teneke_buttons("add"))
+        else:
+            context.user_data["draft"]["target"] = category
+            await edit_or_send(update, f"{category}\n\nEC değeri nedir?", standalone_measurement_choice_menu("ec"))
         return
     if data == "ectds:delete":
         context.user_data["flow"] = "ectds_delete"
@@ -2231,20 +2299,16 @@ async def handle_measurement_callback(update: Update, context: ContextTypes.DEFA
             await edit_or_send(update, "Teneke numarasını yaz:", back_cancel("m:ectds"))
             return
         if action == "add":
-            context.user_data["draft"] = {"teneke": teneke}
+            context.user_data["draft"] = {"category": "Teneke/Konteyner", "target": teneke, "teneke": teneke}
             await edit_or_send(update, f"{teneke}\n\nEC değeri nedir?", standalone_measurement_choice_menu("ec"))
             return
-        rows = [r for r in records(sheet_name) if str(r.get("Teneke_No", "")).strip() == teneke]
+        rows = [r for r in records(sheet_name) if str(r.get("Teneke_No") or r.get("Hedef") or "").strip() == teneke]
         if not rows:
             await edit_or_send(update, f"Teneke {teneke} için EC / TDS kaydı yok.", measurement_menu())
             return
         selected = rows[-1:] if action == "last" else rows
         text = f"Teneke {teneke} - {'Son' if action == 'last' else 'Tüm'} EC / TDS\n\n"
-        for row in selected:
-            text += f"ID {row_id_text(row)} - {row.get('Tarih', '-')}: EC {row.get('EC', '-')} µS | TDS {row.get('TDS', '-')} ppm"
-            if row.get("Not"):
-                text += f" - {row.get('Not')}"
-            text += "\n"
+        text += "\n\n".join(measurement_row_text(row) for row in selected)
         await edit_or_send(update, text, measurement_menu())
 
 
@@ -4637,7 +4701,7 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
 
     if flow == "ectds_add_custom":
-        context.user_data["draft"] = {"teneke": text}
+        context.user_data["draft"] = {"category": "Teneke/Konteyner", "target": text, "teneke": text}
         context.user_data.pop("flow", None)
         await update.effective_message.reply_text("EC değeri nedir?", reply_markup=standalone_measurement_choice_menu("ec"))
         return
@@ -4672,15 +4736,13 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
     if flow == "ectds_add_note":
         d = context.user_data["draft"]
-        item_id = next_id("ec_tds_records")
-        append_record("ec_tds_records", EC_TDS_HEADERS, {
-            "ID": item_id, "Tarih": today_str(), "Teneke_No": d["teneke"],
-            "EC": d["ec"], "TDS": d["tds"], "Not": "" if text == "-" else text,
-            "CreatedAt": now().isoformat(timespec="seconds"),
-        })
+        item_id = add_ec_tds_record(
+            d.get("category", "Genel"), d.get("target", d.get("teneke", "Genel")),
+            d["ec"], d["tds"], "" if text == "-" else text, teneke=d.get("teneke", ""),
+        )
         context.user_data.clear()
         await update.effective_message.reply_text(
-            f"EC / TDS kaydedildi. ID {item_id} - Teneke {d['teneke']} | EC {d['ec']} µS | TDS {d['tds']} ppm",
+            f"EC / TDS kaydedildi. ID {item_id} - {d.get('target', d.get('teneke', 'Genel'))} | EC {d['ec']} µS | TDS {d['tds']} ppm",
             reply_markup=measurement_menu(),
         )
         return
@@ -4808,6 +4870,9 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 undo_items.append(undo)
         material_summary = "; ".join(f"{format_decimal(i['amount'])} {i['unit']} {i['material']}" for i in items)
         add_history(d["type"], material_summary, "-", "", d.get("ph", ""), note, d["date"], d.get("ec", ""), d.get("tds", ""))
+        if d.get("ec") or d.get("tds"):
+            category = ec_tds_category(d.get("type", ""))
+            add_ec_tds_record(category, material_summary or d.get("type", "Genel"), d.get("ec", ""), d.get("tds", ""), note, d["date"])
         if undo_items:
             context.user_data["last_stock_use"] = undo_items[-1]
         context.user_data.pop("flow", None)
