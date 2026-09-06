@@ -11,7 +11,7 @@ import re
 import threading
 import zipfile
 from collections import Counter, defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from time import monotonic, sleep as time_sleep
 from typing import Any
@@ -134,7 +134,7 @@ def start_health_server() -> None:
 
 
 def now() -> datetime:
-    return datetime.utcnow() + TR_TZ_OFFSET
+    return datetime.now(timezone.utc).replace(tzinfo=None) + TR_TZ_OFFSET
 
 
 def today_str() -> str:
@@ -3621,10 +3621,12 @@ async def post_init(app: Application) -> None:
             log.exception("Kritik %s sayfası önbelleğe alınamadı", sheet_name)
         await asyncio.sleep(1.25)
 
-    app.create_task(reminder_worker(app))
-    app.create_task(stock_alert_worker(app))
-    app.create_task(weekly_backup_worker(app))
-    app.create_task(warm_record_cache())
+    # post_init polling başlamadan çalıştığı için Application.create_task uyarı verir.
+    # Bu uzun ömürlü işçiler aktif event loop üzerinde doğrudan başlatılır.
+    asyncio.create_task(reminder_worker(app))
+    asyncio.create_task(stock_alert_worker(app))
+    asyncio.create_task(weekly_backup_worker(app))
+    asyncio.create_task(warm_record_cache())
 
 
 async def ask_ai(question: str, user_id: int, context: ContextTypes.DEFAULT_TYPE) -> str:
