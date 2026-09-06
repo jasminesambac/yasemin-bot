@@ -47,7 +47,7 @@ logging.getLogger("httpcore").setLevel(logging.WARNING)
 TR_TZ_OFFSET = timedelta(hours=3)
 DATE_FMT = "%d-%m-%Y"
 MSG_LIMIT = 3900
-CACHE_TTL_SECONDS = 15
+CACHE_TTL_SECONDS = 90
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 SHEET_ID = os.getenv("SHEET_ID", "").strip()
@@ -89,6 +89,7 @@ AI_LOG_HEADERS = ["ID", "Tarih", "Saat", "Kullanici", "Tur", "Girdi", "Cevap", "
 PLANT_ADVICE_HEADERS = ["ID", "Tarih", "Konu", "Soru", "Tavsiye", "Kaynak", "CreatedAt"]
 
 SHEET: dict[str, gspread.Worksheet] = {}
+SHEET_HEADERS: dict[str, list[str]] = {}
 AI_CLIENT = None
 GROQ_CLIENT = None
 RECORD_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
@@ -1039,26 +1040,6 @@ def init_sheets() -> None:
                 )
                 existing_headers = list(HISTORY_HEADERS)
                 log.info("History sütunları A-J standart sırasına getirildi; ID ilk sütuna taşındı")
-        # Eski taşıma sırasında '+' ile başlayan metinler Sheets tarafından formül
-        # olarak yorumlanmış olabilir. Formülü metne çevir; History'de formül tutulmaz.
-        if title == "history" and existing_headers:
-            formula_values = ws.get_all_values(value_render_option="FORMULA")
-            repaired = 0
-            for row_number, row in enumerate(formula_values[1:], start=2):
-                for header in ("Islem", "Malzeme", "Not"):
-                    if header not in existing_headers:
-                        continue
-                    col_number = existing_headers.index(header) + 1
-                    value = row[col_number - 1] if col_number <= len(row) else ""
-                    if isinstance(value, str) and value.startswith("=+"):
-                        ws.update(
-                            [[value[1:]]],
-                            range_name=rowcol_to_a1(row_number, col_number),
-                            value_input_option="RAW",
-                        )
-                        repaired += 1
-            if repaired:
-                log.info("History'de formül sanılan %s metin kaydı düzeltildi", repaired)
         # Eski History kayıtlarını bozmadan EC ve TDS'yi pH'ın hemen yanına yerleştir.
         if title == "history" and existing_headers and "pH" in existing_headers:
             insert_at = existing_headers.index("pH") + 2
@@ -1082,6 +1063,7 @@ def init_sheets() -> None:
                     ws.update_cell(1, len(existing_headers) + 1, header)
                     existing_headers.append(header)
         SHEET[title] = ws
+        SHEET_HEADERS[title] = list(existing_headers or headers)
 
 
 def init_ai() -> None:
@@ -1098,18 +1080,20 @@ def _sheets_get_all_records(sheet_name: str) -> list[dict[str, Any]]:
     Hemen pes edip 'Bot hatası' bildirimi göndermek yerine, kısa bir bekleme ile birkaç kez
     tekrar deniyoruz - genelde bir sonraki deneme başarılı oluyor."""
     last_exc: Exception = RuntimeError("bilinmeyen hata")
-    for attempt in range(3):
+    for attempt in range(4):
         try:
             return SHEET[sheet_name].get_all_records()
         except gspread.exceptions.APIError as exc:
             last_exc = exc
             status = getattr(getattr(exc, "response", None), "status_code", None)
-            if status not in (500, 502, 503, 504) or attempt == 2:
+            if status not in (429, 500, 502, 503, 504) or attempt == 3:
                 raise
-            time_sleep(1.5 * (attempt + 1))
+            # 429 kota hatasında aynı dakika içinde tekrar tekrar okumak sorunu
+            # büyütür. Google'ın dakika penceresinin boşalmasına zaman tanı.
+            time_sleep((15 * (attempt + 1)) if status == 429 else (1.5 * (attempt + 1)))
         except Exception as exc:
             last_exc = exc
-            if attempt == 2:
+            if attempt == 3:
                 raise
             time_sleep(1.5 * (attempt + 1))
     raise last_exc
@@ -1153,6 +1137,34 @@ def records(sheet_name: str) -> list[dict[str, Any]]:
     return _refresh_records(sheet_name)
 
 
+def _patch_cached_record(sheet_name: str, row_number: int, values: dict[str, Any]) -> None:
+    """Başarılı Sheets yazımını önbelleğe yansıt; yeniden okuma gerektirmez."""
+    with SHEET_CACHE_LOCK:
+        cached = RECORD_CACHE.get(sheet_name)
+        if not cached:
+            return
+        rows = [dict(row) for row in cached[1]]
+        for row in rows:
+            if int(row.get("_row", 0)) == row_number:
+                row.update(values)
+                RECORD_CACHE[sheet_name] = (monotonic(), rows)
+                return
+
+
+def _append_cached_record(sheet_name: str, values: dict[str, Any]) -> None:
+    """Yeni satırı önbelleğe ekleyerek sonraki menü açılışını hızlandır."""
+    with SHEET_CACHE_LOCK:
+        cached = RECORD_CACHE.get(sheet_name)
+        if not cached:
+            return
+        rows = [dict(row) for row in cached[1]]
+        row = dict(values)
+        row["_row"] = max((int(item.get("_row", 1)) for item in rows), default=1) + 1
+        row["_id"] = str(row.get("ID") or row["_row"] - 1)
+        rows.append(row)
+        RECORD_CACHE[sheet_name] = (monotonic(), rows)
+
+
 async def warm_record_cache() -> None:
     loop = asyncio.get_running_loop()
     for sheet_name in SHEET:
@@ -1180,17 +1192,18 @@ def next_id(sheet_name: str) -> int:
 
 
 def append_record(sheet_name: str, headers: list[str], values: dict[str, Any]) -> None:
-    current_headers = SHEET[sheet_name].row_values(1)
+    current_headers = list(SHEET_HEADERS.get(sheet_name, []))
     if not current_headers:
         SHEET[sheet_name].append_row(headers)
-        current_headers = headers
+        current_headers = list(headers)
     for header in headers:
         if header not in current_headers:
             SHEET[sheet_name].update_cell(1, len(current_headers) + 1, header)
             current_headers.append(header)
+    SHEET_HEADERS[sheet_name] = list(current_headers)
     row = [values.get(h, "") for h in current_headers]
     SHEET[sheet_name].append_row(row, value_input_option="USER_ENTERED")
-    RECORD_CACHE.pop(sheet_name, None)
+    _append_cached_record(sheet_name, values)
 
 
 def write_ai_log(sheet_name: str, user_id: int | str, kind: str, prompt: str, answer: str, extra: str = "") -> int:
@@ -1380,13 +1393,14 @@ def find_inventory_by_name(name: str) -> dict[str, Any] | None:
 
 
 def set_cell_by_header(sheet_name: str, row_number: int, header: str, value: Any) -> None:
-    header_row = SHEET[sheet_name].row_values(1)
+    header_row = list(SHEET_HEADERS.get(sheet_name, []))
     if header not in header_row:
         SHEET[sheet_name].update_cell(1, len(header_row) + 1, header)
         header_row.append(header)
+        SHEET_HEADERS[sheet_name] = list(header_row)
     col = header_row.index(header) + 1
     SHEET[sheet_name].update_cell(row_number, col, value)
-    RECORD_CACHE.pop(sheet_name, None)
+    _patch_cached_record(sheet_name, row_number, {header: value})
 
 
 def _a1(row: int, col: int) -> str:
@@ -1402,12 +1416,13 @@ def set_cells_by_header(sheet_name: str, row_number: int, values: dict[str, Any]
     """Aynı satırdaki birden fazla hücreyi tek Sheets isteğiyle günceller (kota tasarrufu)."""
     if not values:
         return
-    header_row = SHEET[sheet_name].row_values(1)
+    header_row = list(SHEET_HEADERS.get(sheet_name, []))
     updates = []
     for header, value in values.items():
         if header not in header_row:
             SHEET[sheet_name].update_cell(1, len(header_row) + 1, header)
             header_row.append(header)
+            SHEET_HEADERS[sheet_name] = list(header_row)
         col = header_row.index(header) + 1
         updates.append({"range": _a1(row_number, col), "values": [[value]]})
     try:
@@ -1417,7 +1432,7 @@ def set_cells_by_header(sheet_name: str, row_number: int, values: dict[str, Any]
         for header, value in values.items():
             set_cell_by_header(sheet_name, row_number, header, value)
         return
-    RECORD_CACHE.pop(sheet_name, None)
+    _patch_cached_record(sheet_name, row_number, values)
 
 
 def alert_value(key: str) -> str:
@@ -3692,6 +3707,7 @@ async def reminder_worker(app: Application) -> None:
 
 _stock_alert_sent_memory: set[str] = set()
 _expiry_alert_sent_memory: set[str] = set()
+WORKER_TASKS: set[asyncio.Task[Any]] = set()
 
 
 async def stock_alert_worker(app: Application) -> None:
@@ -3756,7 +3772,9 @@ async def stock_alert_worker(app: Application) -> None:
         except Exception as exc:
             log.exception("Kritik stok kontrolünde hata")
             await notify_admin_error(app.bot, "stock_alert_worker", exc)
-        await asyncio.sleep(60)
+        # Stok/SKT değerleri saniyelik değişmediği için beş dakikalık kontrol
+        # yeterlidir ve Sheets okuma kotasını belirgin biçimde azaltır.
+        await asyncio.sleep(300)
 
 
 async def post_init(app: Application) -> None:
@@ -3769,12 +3787,26 @@ async def post_init(app: Application) -> None:
             log.exception("Kritik %s sayfası önbelleğe alınamadı", sheet_name)
         await asyncio.sleep(1.25)
 
-    # post_init polling başlamadan çalıştığı için Application.create_task uyarı verir.
-    # Bu uzun ömürlü işçiler aktif event loop üzerinde doğrudan başlatılır.
-    asyncio.create_task(reminder_worker(app))
-    asyncio.create_task(stock_alert_worker(app))
-    asyncio.create_task(weekly_backup_worker(app))
-    asyncio.create_task(warm_record_cache())
+    # İşçileri izleyerek Render yeniden dağıtımında temiz biçimde kapat.
+    for coroutine in (
+        reminder_worker(app),
+        stock_alert_worker(app),
+        weekly_backup_worker(app),
+        warm_record_cache(),
+    ):
+        task = asyncio.create_task(coroutine)
+        WORKER_TASKS.add(task)
+        task.add_done_callback(WORKER_TASKS.discard)
+
+
+async def post_shutdown(app: Application) -> None:
+    """Render SIGTERM gönderdiğinde arka plan işçilerini yarım bırakmadan kapat."""
+    tasks = list(WORKER_TASKS)
+    for task in tasks:
+        task.cancel()
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+    WORKER_TASKS.clear()
 
 
 async def ask_ai(question: str, user_id: int, context: ContextTypes.DEFAULT_TYPE) -> str:
@@ -6079,7 +6111,14 @@ def build_app() -> Application:
         write_timeout=30.0,
         pool_timeout=10.0,
     )
-    app = Application.builder().token(TELEGRAM_BOT_TOKEN).request(request).post_init(post_init).build()
+    app = (
+        Application.builder()
+        .token(TELEGRAM_BOT_TOKEN)
+        .request(request)
+        .post_init(post_init)
+        .post_shutdown(post_shutdown)
+        .build()
+    )
     app.add_handler(CommandHandler(["start", "menu"], start))
     app.add_handler(CommandHandler("iptal", cancel))
     app.add_handler(CommandHandler("ara", search_command))
