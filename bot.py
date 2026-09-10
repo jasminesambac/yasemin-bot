@@ -22,7 +22,7 @@ from gspread.utils import rowcol_to_a1
 from oauth2client.service_account import ServiceAccountCredentials
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputFile, KeyboardButton, ReplyKeyboardMarkup, Update
 from telegram.constants import ChatAction
-from telegram.error import BadRequest
+from telegram.error import BadRequest, NetworkError, RetryAfter, TimedOut
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
 from telegram.request import HTTPXRequest
 
@@ -1219,18 +1219,33 @@ def next_id(sheet_name: str) -> int:
     return max(ids or [0]) + 1
 
 
+def _sheets_write(operation: Any, *args: Any, **kwargs: Any) -> Any:
+    """Geçici Sheets kota/sunucu hatalarında güvenli yazma tekrarları uygula."""
+    last_exc: Exception = RuntimeError("Sheets yazma hatası")
+    for attempt in range(4):
+        try:
+            return operation(*args, **kwargs)
+        except gspread.exceptions.APIError as exc:
+            last_exc = exc
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            if status not in (429, 500, 502, 503, 504) or attempt == 3:
+                raise
+            time_sleep((8 * (attempt + 1)) if status == 429 else (1.5 * (attempt + 1)))
+    raise last_exc
+
+
 def append_record(sheet_name: str, headers: list[str], values: dict[str, Any]) -> None:
     current_headers = list(SHEET_HEADERS.get(sheet_name, []))
     if not current_headers:
-        SHEET[sheet_name].append_row(headers)
+        _sheets_write(SHEET[sheet_name].append_row, headers)
         current_headers = list(headers)
     for header in headers:
         if header not in current_headers:
-            SHEET[sheet_name].update_cell(1, len(current_headers) + 1, header)
+            _sheets_write(SHEET[sheet_name].update_cell, 1, len(current_headers) + 1, header)
             current_headers.append(header)
     SHEET_HEADERS[sheet_name] = list(current_headers)
     row = [values.get(h, "") for h in current_headers]
-    SHEET[sheet_name].append_row(row, value_input_option="USER_ENTERED")
+    _sheets_write(SHEET[sheet_name].append_row, row, value_input_option="USER_ENTERED")
     _append_cached_record(sheet_name, values)
 
 
@@ -1423,11 +1438,11 @@ def find_inventory_by_name(name: str) -> dict[str, Any] | None:
 def set_cell_by_header(sheet_name: str, row_number: int, header: str, value: Any) -> None:
     header_row = list(SHEET_HEADERS.get(sheet_name, []))
     if header not in header_row:
-        SHEET[sheet_name].update_cell(1, len(header_row) + 1, header)
+        _sheets_write(SHEET[sheet_name].update_cell, 1, len(header_row) + 1, header)
         header_row.append(header)
         SHEET_HEADERS[sheet_name] = list(header_row)
     col = header_row.index(header) + 1
-    SHEET[sheet_name].update_cell(row_number, col, value)
+    _sheets_write(SHEET[sheet_name].update_cell, row_number, col, value)
     _patch_cached_record(sheet_name, row_number, {header: value})
 
 
@@ -1448,13 +1463,13 @@ def set_cells_by_header(sheet_name: str, row_number: int, values: dict[str, Any]
     updates = []
     for header, value in values.items():
         if header not in header_row:
-            SHEET[sheet_name].update_cell(1, len(header_row) + 1, header)
+            _sheets_write(SHEET[sheet_name].update_cell, 1, len(header_row) + 1, header)
             header_row.append(header)
             SHEET_HEADERS[sheet_name] = list(header_row)
         col = header_row.index(header) + 1
         updates.append({"range": _a1(row_number, col), "values": [[value]]})
     try:
-        SHEET[sheet_name].batch_update(updates)
+        _sheets_write(SHEET[sheet_name].batch_update, updates)
     except Exception:
         log.exception("batch_update basarisiz, tek tek deneniyor")
         for header, value in values.items():
@@ -5960,6 +5975,11 @@ async def show_stock_report(update: Update, name: str) -> None:
 _LAST_ERROR_NOTIFY: dict[str, float] = {}
 
 
+def is_transient_telegram_error(exc: BaseException | None) -> bool:
+    """Telegram ağ geçidi/bağlantı kesintileri bot mantığı hatası değildir."""
+    return isinstance(exc, (NetworkError, TimedOut, RetryAfter))
+
+
 async def notify_admin_error(bot: Any, source: str, exc: BaseException) -> None:
     """Kritik bir hata olduğunda bot sahibine (stock_chat_id) kısa bir uyarı gönderir.
     Aynı kaynak+hata türü için 10 dakikada bir bildirim gönderir (spam olmasın diye)."""
@@ -5976,11 +5996,18 @@ async def notify_admin_error(bot: Any, source: str, exc: BaseException) -> None:
             chat_id=int(chat_id),
             text=f"⚠️ Bot hatası ({source})\n\n{type(exc).__name__}: {str(exc)[:300]}",
         )
+    except (NetworkError, TimedOut, RetryAfter) as notify_exc:
+        log.warning("Geçici Telegram kesintisi nedeniyle admin bildirimi ertelendi: %s", notify_exc)
     except Exception:
         log.exception("Admin hata bildirimi gönderilemedi")
 
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if is_transient_telegram_error(context.error):
+        # python-telegram-bot polling'i bağlantı düzelince kendisi sürdürür.
+        # Kullanıcıya/admin'e ikinci bir başarısız Telegram isteği gönderme.
+        log.warning("Geçici Telegram bağlantı hatası; otomatik toparlanma bekleniyor: %s", context.error)
+        return
     log.exception("Bot hatası", exc_info=context.error)
     if isinstance(update, Update) and update.effective_message:
         await update.effective_message.reply_text("Bir hata oldu ama bot kapanmadı. Ana menüye dönebilirsin.", reply_markup=main_menu())
