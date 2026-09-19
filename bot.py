@@ -3,6 +3,7 @@ import base64
 import calendar
 import csv
 import concurrent.futures
+import copy
 import io
 import json
 import logging
@@ -1224,7 +1225,10 @@ def _sheets_write(operation: Any, *args: Any, **kwargs: Any) -> Any:
     last_exc: Exception = RuntimeError("Sheets yazma hatası")
     for attempt in range(4):
         try:
-            return operation(*args, **kwargs)
+            # gspread batch_update, verilen range sözlüklerini yerinde değiştirir.
+            # Kota sonrası aynı nesneyi tekrar kullanmak "'sheet'!'sheet'!B4"
+            # gibi geçersiz, iki kez öneklenmiş aralıklar üretebilir.
+            return operation(*copy.deepcopy(args), **copy.deepcopy(kwargs))
         except gspread.exceptions.APIError as exc:
             last_exc = exc
             status = getattr(getattr(exc, "response", None), "status_code", None)
