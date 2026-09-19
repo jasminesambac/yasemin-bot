@@ -1380,8 +1380,7 @@ async def handle_plant_callback(update: Update, context: ContextTypes.DEFAULT_TY
         await edit_or_send(update, f"Reçete olarak kaydedildi. ID {item_id} (Reçeteler menüsünden görebilirsin).", plant_ai_menu())
         return
     if data == "advice:delete":
-        context.user_data["flow"] = "advice_delete"
-        await edit_or_send(update, "Silmek istediğin tavsiye ID numarasını yaz.", back_cancel("advice:list"))
+        await start_bulk_delete(update, context, "plant_advice_saved")
         return
     if data == "advice:export_word":
         await export_advice_word(update, context)
@@ -1611,6 +1610,40 @@ def inventory_buttons(action: str, page: int = 0) -> InlineKeyboardMarkup:
         rows.append([("Geri", "m:essence"), ("İptal", "cancel"), ("Ana Menü", "m:main")])
     else:
         rows.append([("Geri", "m:stock"), ("İptal", "cancel"), ("Ana Menü", "m:main")])
+    return kb(rows)
+
+
+def inventory_multi_buttons(action: str, selected: list[int] | None = None, page: int = 0) -> InlineKeyboardMarkup:
+    items = records("inventory")
+    chosen = {int(value) for value in (selected or [])}
+    page_size = 8
+    start = page * page_size
+    rows: list[list[tuple[str, str]]] = []
+    for item in items[start:start + page_size]:
+        row_number = int(item["_row"])
+        item_id = row_id_text(item)
+        unit = str(item.get("Birim", "")).strip()
+        name = str(item.get("Malzeme / Alet", "Adsız"))[:20]
+        mark = "✅" if row_number in chosen else "⬜"
+        rows.append([(f"{mark} ID {item_id} · {name}{f' ({unit})' if unit else ''}", f"inv:{action}:{row_number}")])
+    nav: list[tuple[str, str]] = []
+    if page > 0:
+        nav.append(("⬅️ Önceki", f"invpage:{action}:{page - 1}"))
+    if len(items) > start + page_size:
+        nav.append(("Sonraki ➡️", f"invpage:{action}:{page + 1}"))
+    if nav:
+        rows.append(nav)
+    prefix = action
+    rows.append([("✅ Seçimi Bitir", f"{prefix}:done")])
+    if action != "recipeadd":
+        rows.append([("⏭ Malzemesiz Devam Et", f"{prefix}:no_material")])
+    back_to = {
+        "histadd": "m:history",
+        "compadd": "m:compost",
+        "planadd": "m:plan",
+        "recipeadd": "m:recipes",
+    }.get(action, "m:stock")
+    rows.append([("Geri", back_to), ("İptal", "cancel")])
     return kb(rows)
 
 
@@ -2039,6 +2072,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await edit_or_send(update, "AI konuşma hafızası temizlendi.", ai_menu())
         return
 
+    if data.startswith("bulkdel:"):
+        await handle_bulk_delete_callback(update, context, data)
+        return
     if data == "stock:delete_confirm":
         await handle_stock_flow_callback(update, context, data)
         return
@@ -2178,7 +2214,7 @@ async def handle_stock_callback(update: Update, context: ContextTypes.DEFAULT_TY
         await edit_or_send(update, "Kategori seç:", category_menu())
         return
     if data == "stock:delete":
-        await edit_or_send(update, "Silmek istediğin malzemeyi seç:", inventory_buttons("delete"))
+        await start_bulk_delete(update, context, "inventory")
         return
     if data == "stock:use":
         context.user_data["flow"] = "stock_use"
@@ -2318,8 +2354,7 @@ async def handle_ph_callback(update: Update, context: ContextTypes.DEFAULT_TYPE,
         ]))
         return
     if data == "ph:delete_id":
-        context.user_data["flow"] = "ph_delete"
-        await edit_or_send(update, "Silmek istediğin pH kaydının ID numarasını yaz.", back_cancel("m:ph"))
+        await start_bulk_delete(update, context, "ph_records")
         return
     if data == "ph:delete_last":
         await edit_or_send(update, "Son pH kaydı silinecek tenekeyi seç:", teneke_buttons("delete_last"))
@@ -2413,8 +2448,7 @@ async def handle_measurement_callback(update: Update, context: ContextTypes.DEFA
             await edit_or_send(update, f"{category}\n\nEC değeri nedir?", standalone_measurement_choice_menu("ec"))
         return
     if data == "ectds:delete":
-        context.user_data["flow"] = "ectds_delete"
-        await edit_or_send(update, "Silmek istediğin EC / TDS kaydının ID numarasını yaz.", back_cancel("m:ectds"))
+        await start_bulk_delete(update, context, "ec_tds_records")
         return
     if data == "ectds:ec_custom":
         context.user_data["flow"] = "ectds_add_ec"
@@ -2475,8 +2509,7 @@ async def handle_history_callback(update: Update, context: ContextTypes.DEFAULT_
         await edit_or_send(update, "Tarih yaz. Örn: 14-06-2026 veya 2026-06-14", back_cancel("m:history"))
         return
     if data == "hist:delete":
-        context.user_data["flow"] = "history_delete"
-        await edit_or_send(update, "Silmek istediğin işlem ID numarasını yaz.", back_cancel("m:history"))
+        await start_bulk_delete(update, context, "history")
         return
     if data == "hist:add":
         context.user_data["flow"] = "histadd_date"
@@ -2494,17 +2527,29 @@ async def handle_history_callback(update: Update, context: ContextTypes.DEFAULT_
         return
     if data.startswith("histadd:tur:"):
         context.user_data.setdefault("draft", {})["type"] = data.split(":", 2)[2]
-        await edit_or_send(update, "Malzeme seç:", inventory_buttons("histadd"))
+        context.user_data["draft"]["selected_rows"] = []
+        context.user_data["flow"] = "inventory_multi_input"
+        context.user_data["inventory_multi_action"] = "histadd"
+        await edit_or_send(update, "Malzemeleri seç veya stok ID'lerini boşlukla ayırarak yaz. Örnek: 3 7 12", inventory_multi_buttons("histadd"))
         return
     if data == "histadd:more":
-        await edit_or_send(update, "Eklemek istediğin diğer malzemeyi seç:", inventory_buttons("histadd"))
+        selected = context.user_data.get("draft", {}).get("selected_rows", [])
+        await edit_or_send(update, "Malzemeleri seç:", inventory_multi_buttons("histadd", selected))
         return
     if data == "histadd:done":
-        items = context.user_data.get("draft", {}).get("items", [])
-        if not items:
-            await edit_or_send(update, "Devam etmek için en az bir malzeme eklemelisin.", inventory_buttons("histadd"))
+        draft = context.user_data.setdefault("draft", {})
+        selected = draft.get("selected_rows", [])
+        if selected and not draft.get("items"):
+            draft["amount_queue"] = list(selected)
+            await ask_next_selected_amount(update, context, "histadd")
             return
         await edit_or_send(update, "pH seç:", ph_choice_menu())
+        return
+    if data == "histadd:no_material":
+        draft = context.user_data.setdefault("draft", {})
+        draft["items"] = []
+        draft["selected_rows"] = []
+        await edit_or_send(update, "Malzemesiz devam ediliyor. pH seç:", ph_choice_menu())
         return
     if data == "histadd:ph_custom":
         context.user_data["flow"] = "histadd_custom_ph"
@@ -2554,8 +2599,7 @@ async def handle_compost_callback(update: Update, context: ContextTypes.DEFAULT_
         await edit_or_send(update, "Tarih yaz. Örn: 14-06-2026 veya 2026-06-14", back_cancel("m:compost"))
         return
     if data == "comp:delete":
-        context.user_data["flow"] = "compost_delete"
-        await edit_or_send(update, "Silmek istediğin Kompost işlem ID numarasını yaz.", back_cancel("m:compost"))
+        await start_bulk_delete(update, context, "Kompost")
         return
     if data.startswith("compadd:date:"):
         choice = data.rsplit(":", 1)[1]
@@ -2585,13 +2629,29 @@ async def handle_compost_callback(update: Update, context: ContextTypes.DEFAULT_
         return
     if data.startswith("compadd:tur:"):
         context.user_data.setdefault("draft", {"items": [], "containers": []})["type"] = data.split(":", 2)[2]
-        await edit_or_send(update, "Malzeme seç:", inventory_buttons("compadd"))
+        context.user_data["draft"]["selected_rows"] = []
+        context.user_data["flow"] = "inventory_multi_input"
+        context.user_data["inventory_multi_action"] = "compadd"
+        await edit_or_send(update, "Malzemeleri seç veya stok ID'lerini boşlukla ayırarak yaz. Örnek: 3 7 12", inventory_multi_buttons("compadd"))
         return
     if data == "compadd:more":
-        await edit_or_send(update, "Eklemek istediğin diğer malzemeyi seç:", inventory_buttons("compadd"))
+        selected = context.user_data.get("draft", {}).get("selected_rows", [])
+        await edit_or_send(update, "Malzemeleri seç:", inventory_multi_buttons("compadd", selected))
         return
     if data == "compadd:done":
+        draft = context.user_data.setdefault("draft", {})
+        selected = draft.get("selected_rows", [])
+        if selected and not draft.get("items"):
+            draft["amount_queue"] = list(selected)
+            await ask_next_selected_amount(update, context, "compadd")
+            return
         await edit_or_send(update, "pH seç:", ph_choice_menu("compadd"))
+        return
+    if data == "compadd:no_material":
+        draft = context.user_data.setdefault("draft", {})
+        draft["items"] = []
+        draft["selected_rows"] = []
+        await edit_or_send(update, "Malzemesiz devam ediliyor. pH seç:", ph_choice_menu("compadd"))
         return
     if data == "compadd:ph_custom":
         context.user_data["flow"] = "compadd_custom_ph"
@@ -2618,8 +2678,7 @@ async def handle_plan_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         await edit_or_send(update, "Plan tarihini yaz. Örn: 14-06-2026 veya 2026-06-14", back_cancel("m:plan"))
         return
     if data == "plan:delete":
-        context.user_data["flow"] = "plan_delete"
-        await edit_or_send(update, "Silmek istediğin plan ID numarasını yaz.", back_cancel("m:plan"))
+        await start_bulk_delete(update, context, "plans")
         return
     if data == "plan:complete":
         context.user_data["flow"] = "plan_complete"
@@ -2639,10 +2698,23 @@ async def handle_plan_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         await edit_or_send(update, "Hedef/alan seç veya yaz:", area_buttons("planadd", "m:plan"))
         return
     if data == "planadd:more":
-        await edit_or_send(update, "Plan için başka malzeme seç:", inventory_buttons("planadd"))
+        selected = context.user_data.get("draft", {}).get("selected_rows", [])
+        await edit_or_send(update, "Plan malzemelerini seç:", inventory_multi_buttons("planadd", selected))
         return
     if data == "planadd:done":
+        draft = context.user_data.setdefault("draft", {})
+        selected = draft.get("selected_rows", [])
+        if selected and not draft.get("items"):
+            draft["amount_queue"] = list(selected)
+            await ask_next_selected_amount(update, context, "planadd")
+            return
         await edit_or_send(update, "pH seç:", ph_choice_menu("planadd"))
+        return
+    if data == "planadd:no_material":
+        draft = context.user_data.setdefault("draft", {})
+        draft["items"] = []
+        draft["selected_rows"] = []
+        await edit_or_send(update, "Malzemesiz devam ediliyor. pH seç:", ph_choice_menu("planadd"))
         return
     if data == "planadd:ph_custom":
         context.user_data["flow"] = "planadd_custom_ph"
@@ -2675,8 +2747,7 @@ async def handle_area_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         await edit_or_send(update, "Alan adını yaz. Örn: Sera 1, Çelik Alanı, Kompost Alanı", back_cancel("m:areas"))
         return
     if data == "area:delete":
-        context.user_data["flow"] = "area_delete"
-        await edit_or_send(update, "Silmek istediğin alan ID numarasını yaz.", back_cancel("m:areas"))
+        await start_bulk_delete(update, context, "areas")
         return
     if data.startswith("area_select:"):
         _, action, row_s = data.split(":", 2)
@@ -2690,7 +2761,10 @@ async def handle_area_callback(update: Update, context: ContextTypes.DEFAULT_TYP
                 await edit_or_send(update, "Alan bulunamadı.", area_buttons("planadd", "m:plan"))
                 return
             context.user_data.setdefault("draft", {})["target"] = area.get("Alan", "")
-            await edit_or_send(update, "Plan için malzeme seç veya malzeme kullanmayacaksan devam et:", inventory_buttons("planadd"))
+            context.user_data["draft"]["selected_rows"] = []
+            context.user_data["flow"] = "inventory_multi_input"
+            context.user_data["inventory_multi_action"] = "planadd"
+            await edit_or_send(update, "Plan malzemelerini seç veya stok ID'lerini yaz:", inventory_multi_buttons("planadd"))
 
 
 async def handle_recipe_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, data: str) -> None:
@@ -2731,20 +2805,28 @@ async def handle_recipe_callback(update: Update, context: ContextTypes.DEFAULT_T
         await edit_or_send(update, "Uygulamak istediğin reçete ID numarasını yaz.", back_cancel("m:recipes"))
         return
     if data == "recipe:delete":
-        context.user_data["flow"] = "recipe_delete"
-        await edit_or_send(update, "Silmek istediğin reçete ID numarasını yaz.", back_cancel("m:recipes"))
+        await start_bulk_delete(update, context, "recipes")
         return
     if data.startswith("recipeadd:tur:"):
         context.user_data.setdefault("draft", {"items": []})["type"] = data.split(":", 2)[2]
-        await edit_or_send(update, "Reçete malzemelerini seç:", inventory_buttons("recipeadd"))
+        context.user_data["draft"]["selected_rows"] = []
+        context.user_data["flow"] = "inventory_multi_input"
+        context.user_data["inventory_multi_action"] = "recipeadd"
+        await edit_or_send(update, "Reçete malzemelerini seç veya stok ID'lerini yaz:", inventory_multi_buttons("recipeadd"))
         return
     if data == "recipeadd:more":
-        await edit_or_send(update, "Reçete için başka malzeme seç:", inventory_buttons("recipeadd"))
+        selected = context.user_data.get("draft", {}).get("selected_rows", [])
+        await edit_or_send(update, "Reçete malzemelerini seç:", inventory_multi_buttons("recipeadd", selected))
         return
     if data == "recipeadd:done":
-        items = context.user_data.get("draft", {}).get("items", [])
-        if not items:
-            await edit_or_send(update, "Reçete için en az bir malzeme eklemelisin.", inventory_buttons("recipeadd"))
+        draft = context.user_data.setdefault("draft", {})
+        selected = draft.get("selected_rows", [])
+        if selected and not draft.get("items"):
+            draft["amount_queue"] = list(selected)
+            await ask_next_selected_amount(update, context, "recipeadd")
+            return
+        if not draft.get("items"):
+            await edit_or_send(update, "Reçete için en az bir malzeme seçmelisin.", inventory_multi_buttons("recipeadd", selected))
             return
         await edit_or_send(update, "Reçete pH değeri seç:", ph_choice_menu("recipeadd"))
         return
@@ -2797,8 +2879,7 @@ async def handle_diary_callback(update: Update, context: ContextTypes.DEFAULT_TY
         await edit_or_send(update, "Özetlenecek tarihi yaz. Örn: bugün veya 14-06-2026", back_cancel("m:diary"))
         return
     if data == "diary:delete":
-        context.user_data["flow"] = "diary_delete"
-        await edit_or_send(update, "Silmek istediğin günlük ID numarasını yaz.", back_cancel("m:diary"))
+        await start_bulk_delete(update, context, "diary")
         return
     if data.startswith("diary:date:"):
         choice = data.rsplit(":", 1)[1]
@@ -2828,8 +2909,8 @@ async def handle_essence_callback(update: Update, context: ContextTypes.DEFAULT_
         await edit_or_send(update, "Bitirilecek esans ID numarasını yaz.", back_cancel("m:essence"))
         return
     if data == "ess:delete":
-        context.user_data["flow"] = "ess_delete"
-        await edit_or_send(update, "Silinecek esans ID numarasını yaz.", back_cancel("m:essence"))
+        await start_bulk_delete(update, context, "essences")
+        return
 
 
 async def show_history(update: Update, count: int) -> None:
@@ -3400,8 +3481,7 @@ async def handle_reminder_callback(update: Update, context: ContextTypes.DEFAULT
         await edit_or_send(update, text, reminder_menu())
         return
     if data == "rem:delete":
-        context.user_data["flow"] = "rem_delete"
-        await edit_or_send(update, "Silmek istediğin hatırlatma ID numarasını yaz.", back_cancel("m:reminder"))
+        await start_bulk_delete(update, context, "reminders")
         return
     if data.startswith("rem:date:"):
         choice = data.rsplit(":", 1)[1]
@@ -3536,8 +3616,7 @@ async def handle_observation_callback(update: Update, context: ContextTypes.DEFA
         await edit_or_send(update, "Gözlem tarihini yaz. Örn: 14-06-2026 veya 2026-06-14", back_cancel("m:observation"))
         return
     if data == "obs:delete":
-        context.user_data["flow"] = "obs_delete"
-        await edit_or_send(update, "Silmek istediğin gözlem ID numarasını yaz.", back_cancel("m:observation"))
+        await start_bulk_delete(update, context, "observations")
 
 
 def render_line_chart(title: str, series: dict[str, list[tuple[str, float]]], ylabel: str) -> io.BytesIO:
@@ -4612,6 +4691,43 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await cancel(update, context)
         return
 
+    if flow == "inventory_multi_input":
+        action = str(context.user_data.get("inventory_multi_action", ""))
+        requested = {value for value in re.split(r"[\s,;]+", text) if value}
+        inventory = records("inventory")
+        by_id = {row_id_text(row): int(row["_row"]) for row in inventory}
+        selected_rows = [by_id[value] for value in requested if value in by_id]
+        missing = sorted(requested - set(by_id))
+        if not selected_rows:
+            await update.effective_message.reply_text(
+                "Geçerli stok ID'si bulunamadı. Ekrandaki ID'lerden örneğin 3 7 12 yaz.",
+                reply_markup=inventory_multi_buttons(action, context.user_data.get("draft", {}).get("selected_rows", [])),
+            )
+            return
+        draft = context.user_data.setdefault("draft", {})
+        draft["selected_rows"] = selected_rows
+        draft["amount_queue"] = list(selected_rows)
+        if missing:
+            await update.effective_message.reply_text("Bulunamayan stok ID: " + ", ".join(missing))
+        await ask_next_selected_amount(update, context, action)
+        return
+
+    if flow == "bulk_delete_input":
+        state = context.user_data.get("bulk_delete", {})
+        sheet_name = state.get("sheet")
+        requested = {value for value in re.split(r"[\s,;]+", text) if value}
+        existing = {row_id_text(row) for row in records(sheet_name)} if sheet_name else set()
+        valid = requested & existing
+        missing = sorted(requested - existing)
+        if not valid:
+            await update.effective_message.reply_text("Geçerli bir ID bulunamadı. Ekrandaki ID'lerden örneğin 12, 15, 18 yaz.", reply_markup=bulk_delete_menu_for(sheet_name) if sheet_name else main_menu())
+            return
+        state["selected"] = sorted(valid)
+        if missing:
+            await update.effective_message.reply_text("Bulunamayan ID: " + ", ".join(missing))
+        await review_bulk_delete(update, context)
+        return
+
     if flow == "ai_agnes":
         await update.effective_message.chat.send_action(ChatAction.TYPING)
         if not context.user_data.get("ai_history") and not context.user_data.get("ai_memory_cleared"):
@@ -4948,15 +5064,16 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             "amount": amount,
         }
         d.setdefault("items", []).append(item)
+        queue = d.setdefault("amount_queue", [])
+        if queue:
+            queue.pop(0)
         d.pop("current_material", None)
         d.pop("current_unit", None)
-        summary = "\n".join(
-            f"- {format_decimal(i['amount'])} {i['unit']} {i['material']}" for i in d["items"]
-        )
-        await update.effective_message.reply_text(
-            f"Malzeme eklendi.\n\nSeçilenler:\n{summary}\n\nBaşka malzeme ekleyebilir veya devam edebilirsin.",
-            reply_markup=histadd_continue_menu(),
-        )
+        if queue:
+            await ask_next_selected_amount(update, context, "histadd")
+        else:
+            summary = "\n".join(f"- {format_decimal(i['amount'])} {i['unit']} {i['material']}" for i in d["items"])
+            await update.effective_message.reply_text(f"Tüm miktarlar alındı.\n\n{summary}", reply_markup=ph_choice_menu())
         return
     if flow == "histadd_custom_ph":
         try:
@@ -4998,10 +5115,6 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         d = context.user_data["draft"]
         note = "" if text == "-" else text
         items = d.get("items", [])
-        if not items:
-            await update.effective_message.reply_text("Kaydedilecek malzeme yok.", reply_markup=history_menu())
-            context.user_data.clear()
-            return
         for item in items:
             ok, error = check_stock_available(item["material"], item["amount"])
             if not ok:
@@ -5036,7 +5149,7 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         context.user_data.pop("flow", None)
         context.user_data.pop("draft", None)
         await update.effective_message.reply_text(
-            "İşlem kaydedildi ve stoktan düşüldü.\n\n" + "\n".join(results),
+            ("İşlem kaydedildi ve stoktan düşüldü.\n\n" + "\n".join(results)) if results else "Malzemesiz işlem kaydedildi.",
             reply_markup=history_menu(),
         )
         return
@@ -5080,17 +5193,16 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             "amount": amount,
         }
         d.setdefault("items", []).append(item)
+        queue = d.setdefault("amount_queue", [])
+        if queue:
+            queue.pop(0)
         d.pop("current_material", None)
         d.pop("current_unit", None)
-        summary = "\n".join(f"- {format_decimal(i['amount'])} {i['unit']} {i['material']}" for i in d["items"])
-        await update.effective_message.reply_text(
-            f"Malzeme eklendi.\n\nSeçilenler:\n{summary}\n\nBaşka malzeme ekleyebilir veya devam edebilirsin.",
-            reply_markup=kb([
-                [("Başka Malzeme Ekle", "compadd:more")],
-                [("Devam Et", "compadd:done")],
-                [("Geri", "m:compost"), ("İptal", "cancel"), ("Ana Menü", "m:main")],
-            ]),
-        )
+        if queue:
+            await ask_next_selected_amount(update, context, "compadd")
+        else:
+            summary = "\n".join(f"- {format_decimal(i['amount'])} {i['unit']} {i['material']}" for i in d["items"])
+            await update.effective_message.reply_text(f"Tüm miktarlar alındı.\n\n{summary}", reply_markup=ph_choice_menu("compadd"))
         return
     if flow == "compadd_custom_ph":
         try:
@@ -5178,7 +5290,10 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
     if flow == "planadd_target":
         context.user_data.setdefault("draft", {})["target"] = "" if text == "-" else text
-        await update.effective_message.reply_text("Plan için malzeme seç veya malzeme kullanmayacaksan devam et:", reply_markup=inventory_buttons("planadd"))
+        context.user_data["draft"]["selected_rows"] = []
+        context.user_data["flow"] = "inventory_multi_input"
+        context.user_data["inventory_multi_action"] = "planadd"
+        await update.effective_message.reply_text("Plan malzemelerini seç veya stok ID'lerini yaz:", reply_markup=inventory_multi_buttons("planadd"))
         return
     if flow == "planadd_amount":
         try:
@@ -5193,13 +5308,16 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             "amount": amount,
         }
         d.setdefault("items", []).append(item)
+        queue = d.setdefault("amount_queue", [])
+        if queue:
+            queue.pop(0)
         d.pop("current_material", None)
         d.pop("current_unit", None)
-        summary = "\n".join(f"- {format_decimal(i['amount'])} {i['unit']} {i['material']}" for i in d["items"])
-        await update.effective_message.reply_text(
-            f"Malzeme plana eklendi.\n\nSeçilenler:\n{summary}\n\nBaşka malzeme ekleyebilir veya devam edebilirsin.",
-            reply_markup=planadd_continue_menu(),
-        )
+        if queue:
+            await ask_next_selected_amount(update, context, "planadd")
+        else:
+            summary = "\n".join(f"- {format_decimal(i['amount'])} {i['unit']} {i['material']}" for i in d["items"])
+            await update.effective_message.reply_text(f"Tüm miktarlar alındı.\n\n{summary}", reply_markup=ph_choice_menu("planadd"))
         return
     if flow == "planadd_custom_ph":
         try:
@@ -5300,13 +5418,16 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             "unit": d.get("current_unit", ""),
             "amount": amount,
         })
+        queue = d.setdefault("amount_queue", [])
+        if queue:
+            queue.pop(0)
         d.pop("current_material", None)
         d.pop("current_unit", None)
-        summary = "\n".join(f"- {format_decimal(i['amount'])} {i['unit']} {i['material']}" for i in d["items"])
-        await update.effective_message.reply_text(
-            f"Malzeme reçeteye eklendi.\n\n{summary}\n\nBaşka malzeme ekleyebilir veya devam edebilirsin.",
-            reply_markup=recipeadd_continue_menu(),
-        )
+        if queue:
+            await ask_next_selected_amount(update, context, "recipeadd")
+        else:
+            summary = "\n".join(f"- {format_decimal(i['amount'])} {i['unit']} {i['material']}" for i in d["items"])
+            await update.effective_message.reply_text(f"Tüm miktarlar alındı.\n\n{summary}", reply_markup=ph_choice_menu("recipeadd"))
         return
     if flow == "recipeadd_custom_ph":
         try:
@@ -5909,6 +6030,119 @@ async def delete_by_id(update: Update, sheet_name: str, id_text: str, success: s
     await update.effective_message.reply_text("Bu ID bulunamadı.", reply_markup=menu)
 
 
+def bulk_delete_menu_for(sheet_name: str) -> InlineKeyboardMarkup:
+    return {
+        "inventory": stock_menu,
+        "history": history_menu,
+        "Kompost": compost_menu,
+        "essences": essence_menu,
+        "ph_records": ph_menu,
+        "ec_tds_records": measurement_menu,
+        "plans": plan_menu,
+        "areas": area_menu,
+        "recipes": recipe_menu,
+        "diary": diary_menu,
+        "reminders": reminder_menu,
+        "observations": observation_menu,
+        "plant_advice_saved": advice_list_menu,
+    }[sheet_name]()
+
+
+def bulk_delete_line(sheet_name: str, row: dict[str, Any]) -> str:
+    if sheet_name == "inventory":
+        detail = f"{row.get('Malzeme / Alet', '-')} — {row.get('Kalan Miktar', '-')} {row.get('Birim', '')}"
+    elif sheet_name == "history":
+        detail = f"{row.get('Tarih', '-')} — {row.get('Islem', '-')} — {history_material(row) or 'malzemesiz'}"
+    elif sheet_name == "Kompost":
+        detail = f"{row.get('Tarih', '-')} — {row.get('Islem', '-')}"
+    elif sheet_name == "essences":
+        detail = f"{row.get('Baslangic', '-')} — {row.get('Cicek', '-')} / {row.get('Yag', '-')}"
+    else:
+        preferred = ("Tarih", "Ad", "Alan", "Islem", "Metin", "Kategori", "Konu", "Not")
+        values = [str(row.get(key, "")).strip() for key in preferred if str(row.get(key, "")).strip()]
+        detail = " — ".join(values[:3]) or "Kayıt"
+    return f"ID {row_id_text(row)} — {detail}"
+
+
+def bulk_delete_keyboard(rows: list[dict[str, Any]], selected: set[str]) -> InlineKeyboardMarkup:
+    buttons: list[list[tuple[str, str]]] = []
+    line: list[tuple[str, str]] = []
+    for row in rows[-30:][::-1]:
+        item_id = row_id_text(row)
+        line.append((f"{'✅' if item_id in selected else '⬜'} ID {item_id}", f"bulkdel:toggle:{item_id}"))
+        if len(line) == 3:
+            buttons.append(line)
+            line = []
+    if line:
+        buttons.append(line)
+    buttons.append([("✅ Seçimi Tamamla", "bulkdel:review"), ("❌ İptal", "bulkdel:cancel")])
+    return kb(buttons)
+
+
+async def start_bulk_delete(update: Update, context: ContextTypes.DEFAULT_TYPE, sheet_name: str) -> None:
+    rows = records(sheet_name)
+    if not rows:
+        await edit_or_send(update, "Silinecek kayıt yok.", bulk_delete_menu_for(sheet_name))
+        return
+    context.user_data["bulk_delete"] = {"sheet": sheet_name, "selected": []}
+    context.user_data["flow"] = "bulk_delete_input"
+    listing = "\n".join(bulk_delete_line(sheet_name, row) for row in rows[-30:][::-1])
+    await edit_or_send(
+        update,
+        f"Silinecek kayıtları butonlardan seç veya ID'leri boşlukla ayırarak yaz.\nÖrnek: 12 15 18\n\n{listing}"[:MSG_LIMIT],
+        bulk_delete_keyboard(rows, set()),
+    )
+
+
+async def review_bulk_delete(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    state = context.user_data.get("bulk_delete", {})
+    sheet_name = state.get("sheet")
+    selected = {str(value) for value in state.get("selected", [])}
+    rows = [row for row in records(sheet_name) if row_id_text(row) in selected] if sheet_name else []
+    if not rows:
+        await edit_or_send(update, "En az bir ID seç veya yaz.", bulk_delete_keyboard(records(sheet_name), selected) if sheet_name else main_menu())
+        return
+    summary = "\n".join(f"• {bulk_delete_line(sheet_name, row)}" for row in rows)
+    await edit_or_send(update, f"{len(rows)} kayıt silinecek:\n\n{summary}\n\nBu işlem geri alınamaz.", kb([
+        [("🗑 Seçilenleri Sil", "bulkdel:confirm")],
+        [("⬅️ Seçime Dön", "bulkdel:back"), ("❌ İptal", "bulkdel:cancel")],
+    ]))
+
+
+async def handle_bulk_delete_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, data: str) -> None:
+    state = context.user_data.get("bulk_delete", {})
+    sheet_name = state.get("sheet")
+    if not sheet_name:
+        await edit_or_send(update, "Silme seçimi sona ermiş.", main_menu())
+        return
+    if data == "bulkdel:cancel":
+        context.user_data.clear()
+        await edit_or_send(update, "Silme iptal edildi.", bulk_delete_menu_for(sheet_name))
+        return
+    if data.startswith("bulkdel:toggle:"):
+        item_id = data.rsplit(":", 1)[1]
+        selected = set(str(value) for value in state.setdefault("selected", []))
+        selected.remove(item_id) if item_id in selected else selected.add(item_id)
+        state["selected"] = sorted(selected)
+        await edit_or_send(update, f"{len(selected)} kayıt seçildi. Başka ID seçebilir veya tamamlayabilirsin.", bulk_delete_keyboard(records(sheet_name), selected))
+        return
+    if data == "bulkdel:review":
+        await review_bulk_delete(update, context)
+        return
+    if data == "bulkdel:back":
+        selected = set(str(value) for value in state.get("selected", []))
+        await edit_or_send(update, "Seçimi düzenle:", bulk_delete_keyboard(records(sheet_name), selected))
+        return
+    if data == "bulkdel:confirm":
+        selected = {str(value) for value in state.get("selected", [])}
+        matched = [row for row in records(sheet_name) if row_id_text(row) in selected]
+        for row in sorted(matched, key=lambda item: int(item["_row"]), reverse=True):
+            _sheets_write(SHEET[sheet_name].delete_rows, int(row["_row"]))
+        RECORD_CACHE.pop(sheet_name, None)
+        context.user_data.clear()
+        await edit_or_send(update, f"{len(matched)} kayıt silindi.", bulk_delete_menu_for(sheet_name))
+
+
 async def show_month_report(update: Update, month: int, year: int) -> None:
     rows = []
     for row in operational_records():
@@ -6016,40 +6250,54 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 async def histadd_inventory_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, item: dict[str, Any]) -> None:
-    draft = context.user_data.setdefault("draft", {"items": []})
-    draft.setdefault("items", [])
-    draft["current_material"] = item.get("Malzeme / Alet")
-    draft["current_unit"] = item.get("Birim", "")
-    context.user_data["flow"] = "histadd_amount"
-    await edit_or_send(update, f"Malzeme: {item.get('Malzeme / Alet')}\nMiktar yaz:", back_cancel("m:history"))
+    await toggle_inventory_multi(update, context, item, "histadd")
 
 
 async def compadd_inventory_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, item: dict[str, Any]) -> None:
-    draft = context.user_data.setdefault("draft", {"items": [], "containers": []})
-    draft.setdefault("items", [])
-    draft.setdefault("containers", [])
+    await toggle_inventory_multi(update, context, item, "compadd")
+
+
+async def toggle_inventory_multi(update: Update, context: ContextTypes.DEFAULT_TYPE, item: dict[str, Any], action: str) -> None:
+    draft = context.user_data.setdefault("draft", {"items": []})
+    selected = draft.setdefault("selected_rows", [])
+    row_number = int(item["_row"])
+    if row_number in selected:
+        selected.remove(row_number)
+    else:
+        selected.append(row_number)
+    names = [str(find_inventory_by_row(row).get("Malzeme / Alet")) for row in selected if find_inventory_by_row(row)]
+    summary = ", ".join(names) if names else "Henüz seçim yok"
+    await edit_or_send(update, f"Malzemeleri seç. Birden fazla seçebilirsin.\n\nSeçilenler: {summary}", inventory_multi_buttons(action, selected))
+
+
+async def ask_next_selected_amount(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix: str) -> None:
+    draft = context.user_data.setdefault("draft", {})
+    queue = draft.setdefault("amount_queue", [])
+    if not queue:
+        await edit_or_send(update, "pH seç:", ph_choice_menu(prefix))
+        return
+    item = find_inventory_by_row(int(queue[0]))
+    if not item:
+        queue.pop(0)
+        await ask_next_selected_amount(update, context, prefix)
+        return
     draft["current_material"] = item.get("Malzeme / Alet")
     draft["current_unit"] = item.get("Birim", "")
-    context.user_data["flow"] = "compadd_amount"
-    await edit_or_send(update, f"Malzeme: {item.get('Malzeme / Alet')}\nMiktar yaz:", back_cancel("m:compost"))
+    context.user_data["flow"] = f"{prefix}_amount"
+    unit = str(item.get("Birim", "")).strip()
+    await edit_or_send(
+        update,
+        f"{item.get('Malzeme / Alet')} için miktarı yaz.\nBirim otomatik: {unit or 'birim belirtilmemiş'}",
+        back_cancel({"histadd": "m:history", "compadd": "m:compost", "planadd": "m:plan", "recipeadd": "m:recipes"}.get(prefix, "m:main")),
+    )
 
 
 async def planadd_inventory_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, item: dict[str, Any]) -> None:
-    draft = context.user_data.setdefault("draft", {"items": []})
-    draft.setdefault("items", [])
-    draft["current_material"] = item.get("Malzeme / Alet")
-    draft["current_unit"] = item.get("Birim", "")
-    context.user_data["flow"] = "planadd_amount"
-    await edit_or_send(update, f"Malzeme: {item.get('Malzeme / Alet')}\nPlanlanan miktarı yaz:", back_cancel("m:plan"))
+    await toggle_inventory_multi(update, context, item, "planadd")
 
 
 async def recipeadd_inventory_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, item: dict[str, Any]) -> None:
-    draft = context.user_data.setdefault("draft", {"items": []})
-    draft.setdefault("items", [])
-    draft["current_material"] = item.get("Malzeme / Alet")
-    draft["current_unit"] = item.get("Birim", "")
-    context.user_data["flow"] = "recipeadd_amount"
-    await edit_or_send(update, f"Malzeme: {item.get('Malzeme / Alet')}\nReçetedeki miktarı yaz:", back_cancel("m:recipes"))
+    await toggle_inventory_multi(update, context, item, "recipeadd")
 
 
 async def essoil_inventory_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, item: dict[str, Any]) -> None:
@@ -6070,7 +6318,11 @@ old_handle_inventory_callback = handle_inventory_callback
 async def handle_inventory_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, data: str) -> None:
     if data.startswith("invpage:"):
         _, action, page = data.split(":")
-        await edit_or_send(update, "Malzeme seç:", inventory_buttons(action, int(page)))
+        if action in {"histadd", "compadd", "planadd", "recipeadd"}:
+            selected = context.user_data.get("draft", {}).get("selected_rows", [])
+            await edit_or_send(update, "Malzemeleri seç:", inventory_multi_buttons(action, selected, int(page)))
+        else:
+            await edit_or_send(update, "Malzeme seç:", inventory_buttons(action, int(page)))
         return
     _, action, row_s = data.split(":")
     item = find_inventory_by_row(int(row_s))
