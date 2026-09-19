@@ -6083,6 +6083,17 @@ def bulk_delete_keyboard(rows: list[dict[str, Any]], selected: set[str]) -> Inli
     return kb(buttons)
 
 
+def bulk_delete_selection_text(sheet_name: str, rows: list[dict[str, Any]], selected: set[str]) -> str:
+    selected_text = " ".join(sorted(selected, key=lambda value: (0, int(value)) if value.isdigit() else (1, value))) or "Yok"
+    listing = "\n".join(bulk_delete_line(sheet_name, row) for row in rows[-30:][::-1])
+    return (
+        "Silinecek kayıtları butonlardan seç veya ID'leri boşlukla ayırarak yaz.\n"
+        "Örnek: 12 15 18\n\n"
+        f"Seçilen ID'ler: {selected_text}\n\n"
+        f"Kayıt listesi:\n{listing}"
+    )[:MSG_LIMIT]
+
+
 async def start_bulk_delete(update: Update, context: ContextTypes.DEFAULT_TYPE, sheet_name: str) -> None:
     rows = records(sheet_name)
     if not rows:
@@ -6090,10 +6101,9 @@ async def start_bulk_delete(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         return
     context.user_data["bulk_delete"] = {"sheet": sheet_name, "selected": []}
     context.user_data["flow"] = "bulk_delete_input"
-    listing = "\n".join(bulk_delete_line(sheet_name, row) for row in rows[-30:][::-1])
     await edit_or_send(
         update,
-        f"Silinecek kayıtları butonlardan seç veya ID'leri boşlukla ayırarak yaz.\nÖrnek: 12 15 18\n\n{listing}"[:MSG_LIMIT],
+        bulk_delete_selection_text(sheet_name, rows, set()),
         bulk_delete_keyboard(rows, set()),
     )
 
@@ -6126,16 +6136,21 @@ async def handle_bulk_delete_callback(update: Update, context: ContextTypes.DEFA
     if data.startswith("bulkdel:toggle:"):
         item_id = data.rsplit(":", 1)[1]
         selected = set(str(value) for value in state.setdefault("selected", []))
-        selected.remove(item_id) if item_id in selected else selected.add(item_id)
+        if item_id in selected:
+            selected.remove(item_id)
+        else:
+            selected.add(item_id)
         state["selected"] = sorted(selected)
-        await edit_or_send(update, f"{len(selected)} kayıt seçildi. Başka ID seçebilir veya tamamlayabilirsin.", bulk_delete_keyboard(records(sheet_name), selected))
+        rows = records(sheet_name)
+        await edit_or_send(update, bulk_delete_selection_text(sheet_name, rows, selected), bulk_delete_keyboard(rows, selected))
         return
     if data == "bulkdel:review":
         await review_bulk_delete(update, context)
         return
     if data == "bulkdel:back":
         selected = set(str(value) for value in state.get("selected", []))
-        await edit_or_send(update, "Seçimi düzenle:", bulk_delete_keyboard(records(sheet_name), selected))
+        rows = records(sheet_name)
+        await edit_or_send(update, bulk_delete_selection_text(sheet_name, rows, selected), bulk_delete_keyboard(rows, selected))
         return
     if data == "bulkdel:confirm":
         selected = {str(value) for value in state.get("selected", [])}
