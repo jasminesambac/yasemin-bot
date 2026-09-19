@@ -74,7 +74,7 @@ PORT = int(os.getenv("PORT", "10000"))
 INVENTORY_HEADERS = ["ID", "Tarih", "Kategori", "Malzeme / Alet", "Başlangıç Miktarı", "Kullanılan", "Kalan Miktar", "Birim", "Görevi / Not", "Son_Kullanma"]
 HISTORY_HEADERS = ["ID", "Tarih", "Islem", "Malzeme", "Miktar", "Birim", "pH", "EC", "TDS", "Not"]
 KOMPOST_HEADERS = ["ID", "Tarih", "Islem", "Kullanilan_Malzeme_Miktar", "pH", "Not"]
-PH_HEADERS = ["ID", "Tarih", "Teneke_No", "Bolge", "pH", "Not"]
+PH_HEADERS = ["ID", "Tarih", "Teneke_No", "Bolge", "Test_Yontemi", "pH", "Not"]
 EC_TDS_HEADERS = ["ID", "Tarih", "Kayit_Turu", "Hedef", "Teneke_No", "EC", "TDS", "Not"]
 REMINDER_HEADERS = ["ID", "Tarih", "Saat", "Metin", "Durum", "Chat_ID", "Tekrar", "Hafta_Gunu", "Ay_Gunu", "Gun_Araligi", "Bitis_Tarihi", "Kalan_Tekrar", "Yil_Ay"]
 OBSERVATION_HEADERS = ["ID", "Tarih", "Kategori", "Not", "Foto_File_ID", "AI_Yorum", "CreatedAt"]
@@ -517,6 +517,22 @@ def ph_menu() -> InlineKeyboardMarkup:
         [("📋 Tüm Tenekelerin Tüm pH", "ph:all"), ("➕ pH Ekle", "ph:add")],
         [("❌ pH Sil", "ph:delete")],
         [("🔙 Geri", "m:main")],
+    ])
+
+
+PH_TEST_METHODS = {
+    "mud": "Çamur Testi",
+    "four": "4 in 1 Cihaz",
+    "adwa": "ADWA",
+    "liquid": "Sıvı pH Metresi",
+}
+
+
+def ph_test_method_menu() -> InlineKeyboardMarkup:
+    return kb([
+        [("Çamur Testi", "phadd:method:mud"), ("4 in 1 Cihaz", "phadd:method:four")],
+        [("ADWA", "phadd:method:adwa"), ("Sıvı pH Metresi", "phadd:method:liquid")],
+        [("Geri", "ph:add"), ("İptal", "cancel"), ("Ana Menü", "m:main")],
     ])
 
 
@@ -1064,7 +1080,11 @@ def init_sheets() -> None:
                 for row_number, row in enumerate(values[1:], start=2):
                     padded = row + [""] * (len(existing_headers) - len(row))
                     by_header = {header: padded[index] for index, header in enumerate(existing_headers)}
-                    if not str(by_header.get("ID", "")).strip():
+                    if title == "ph_records":
+                        # Eski/yanlış/çakışan pH kimliklerini bu şema geçişinde
+                        # bir defa satır sırasına göre düzelt.
+                        by_header["ID"] = str(row_number - 1)
+                    elif not str(by_header.get("ID", "")).strip():
                         by_header["ID"] = str(row_number - 1)
                     if not str(by_header.get("Tarih", "")).strip() and str(by_header.get("CreatedAt", "")).strip():
                         created_at = str(by_header["CreatedAt"]).strip()
@@ -2091,7 +2111,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if data.startswith("cat:") or data.startswith("unit:") or data.startswith("use:"):
         await handle_stock_flow_callback(update, context, data)
         return
-    if data.startswith("ph:") or data.startswith("teneke:"):
+    if data.startswith("ph:") or data.startswith("teneke:") or data.startswith("phadd:"):
         await handle_ph_callback(update, context, data)
         return
     if data.startswith(("ectds:", "ectdsteneke:")):
@@ -2319,6 +2339,15 @@ async def handle_stock_flow_callback(update: Update, context: ContextTypes.DEFAU
 
 
 async def handle_ph_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, data: str) -> None:
+    if data.startswith("phadd:method:"):
+        method = PH_TEST_METHODS.get(data.rsplit(":", 1)[-1])
+        if not method:
+            await edit_or_send(update, "Geçersiz test yöntemi. Lütfen listeden seç.", ph_test_method_menu())
+            return
+        context.user_data.setdefault("draft", {})["test_method"] = method
+        context.user_data["flow"] = "ph_add_value"
+        await edit_or_send(update, "pH değerini yaz. Örn: 6.5", back_cancel("m:ph"))
+        return
     if data == "ph:last":
         await edit_or_send(update, "Teneke seç:", teneke_buttons("last"))
         return
@@ -2336,7 +2365,10 @@ async def handle_ph_callback(update: Update, context: ContextTypes.DEFAULT_TYPE,
         for teneke in sorted(rows_by_teneke, key=lambda x: int(x) if x.isdigit() else 999999):
             text += f"Teneke {teneke}\n"
             for row in rows_by_teneke[teneke][-5:][::-1]:
-                text += f"ID {row_id_text(row)} - {row.get('Tarih', '-')}: pH {row.get('pH', '-')}"
+                text += (
+                f"ID {row_id_text(row)} - {row.get('Tarih', '-')}: pH {row.get('pH', '-')}"
+                f" | {row.get('Bolge') or '-'} | {row.get('Test_Yontemi') or '-'}"
+            )
                 if row.get("Not"):
                     text += f" - {row.get('Not')}"
                 text += "\n"
@@ -2371,8 +2403,12 @@ async def handle_ph_callback(update: Update, context: ContextTypes.DEFAULT_TYPE,
             return
         if action == "add":
             context.user_data["draft"] = {"teneke": teneke}
-            context.user_data["flow"] = "ph_add_value"
-            await edit_or_send(update, f"{teneke}\n\npH değerini yaz. Örn: 6.5", back_cancel("m:ph"))
+            context.user_data["flow"] = "ph_add_region"
+            await edit_or_send(
+                update,
+                f"{teneke}\n\nÖlçümü nereye yaptın? Bölgeyi veya ölçüm yerini yaz.\nÖrn: üst bölge, kök bölgesi, sulama suyu",
+                back_cancel("m:ph"),
+            )
             return
         if action == "delete_last":
             await delete_last_ph_for_teneke(update, teneke)
@@ -2387,7 +2423,11 @@ async def show_ph_for_teneke(update: Update, teneke: str, action: str) -> None:
         return
     if action == "last":
         row = rows[-1]
-        text = f"Teneke {teneke} - Son pH\n\nID {row_id_text(row)}\nTarih: {row.get('Tarih', '-')}\npH: {row.get('pH', '-')}\nNot: {row.get('Not', '-')}"
+        text = (
+            f"Teneke {teneke} - Son pH\n\nID {row_id_text(row)}\nTarih: {row.get('Tarih', '-')}"
+            f"\nBölge: {row.get('Bolge') or '-'}\nTest yöntemi: {row.get('Test_Yontemi') or '-'}"
+            f"\npH: {row.get('pH', '-')}\nNot: {row.get('Not', '-')}"
+        )
     else:
         text = f"Teneke {teneke} - Tüm pH Kayıtları\n\n"
         for row in rows:
@@ -4302,7 +4342,8 @@ async def execute_quick_log(update: Update, data: dict[str, Any]) -> None:
                 "ID": item_id,
                 "Tarih": today_str(),
                 "Teneke_No": teneke,
-                "Bolge": "",
+                "Bolge": str(data.get("bolge") or "").strip(),
+                "Test_Yontemi": str(data.get("test_yontemi") or "").strip(),
                 "pH": format_decimal(ph_value),
                 "Not": note,
             })
@@ -4934,8 +4975,11 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         context.user_data.pop("flow", None)
         if action == "add":
             context.user_data["draft"] = {"teneke": text}
-            context.user_data["flow"] = "ph_add_value"
-            await update.effective_message.reply_text(f"{text}\n\npH değerini yaz. Örn: 6.5", reply_markup=back_cancel("m:ph"))
+            context.user_data["flow"] = "ph_add_region"
+            await update.effective_message.reply_text(
+                f"{text}\n\nÖlçümü nereye yaptın? Bölgeyi veya ölçüm yerini yaz.",
+                reply_markup=back_cancel("m:ph"),
+            )
             return
         if action == "delete_last":
             await delete_last_ph_for_teneke(update, text)
@@ -4944,8 +4988,16 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
     if flow == "ph_add_teneke":
         context.user_data["draft"]["teneke"] = text
-        context.user_data["flow"] = "ph_add_value"
-        await update.effective_message.reply_text("pH değerini yaz. Örn: 6.5", reply_markup=back_cancel("m:ph"))
+        context.user_data["flow"] = "ph_add_region"
+        await update.effective_message.reply_text(
+            "Ölçümü nereye yaptın? Bölgeyi veya ölçüm yerini yaz.",
+            reply_markup=back_cancel("m:ph"),
+        )
+        return
+    if flow == "ph_add_region":
+        context.user_data["draft"]["region"] = text
+        context.user_data.pop("flow", None)
+        await update.effective_message.reply_text("Test yöntemi nedir?", reply_markup=ph_test_method_menu())
         return
     if flow == "ph_add_value":
         try:
@@ -4966,7 +5018,8 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             "ID": item_id,
             "Tarih": today_str(),
             "Teneke_No": d["teneke"],
-            "Bolge": "",
+            "Bolge": d.get("region", ""),
+            "Test_Yontemi": d.get("test_method", ""),
             "pH": d["ph"],
             "Not": "" if text == "-" else text,
         })
@@ -5269,7 +5322,8 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                     "ID": next_id("ph_records"),
                     "Tarih": d["date"],
                     "Teneke_No": container,
-                    "Bolge": "",
+                    "Bolge": "Kompost",
+                    "Test_Yontemi": "",
                     "pH": d.get("ph", ""),
                     "Not": f"Kompost ID {item_id} - {d['type']}",
                 })
